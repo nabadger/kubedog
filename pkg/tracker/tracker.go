@@ -18,6 +18,7 @@ const (
 	ResourceAdded          TrackerState = "ResourceAdded"
 	ResourceSucceeded      TrackerState = "ResourceSucceeded"
 	ResourceFailed         TrackerState = "ResourceFailed"
+	ResourceDeleted        TrackerState = "ResourceDeleted"
 	FollowingContainerLogs TrackerState = "FollowingContainerLogs"
 	ContainerTrackerDone   TrackerState = "ContainerTrackerDone"
 )

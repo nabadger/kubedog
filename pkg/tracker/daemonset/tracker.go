@@ -27,7 +27,7 @@ type Tracker struct {
 	tracker.Tracker
 	LogsFromTime time.Time
 
-	State                string
+	State                tracker.TrackerState
 	Conditions           []string
 	FinalDaemonSetStatus appsv1.DaemonSetStatus
 	CurrentReady         bool
@@ -38,9 +38,10 @@ type Tracker struct {
 	podStatuses      map[string]pod.PodStatus
 	podGenerations   map[string]string
 
-	Added    chan bool
-	Ready    chan bool
-	Failed   chan string
+	Added  chan DaemonSetStatus
+	Ready  chan DaemonSetStatus
+	Failed chan DaemonSetStatus
+
 	EventMsg chan string
 	// FIXME !!! DaemonSet is not like Deployment.
 	// FIXME !!! DaemonSet is not related to ReplicaSet.
@@ -78,9 +79,10 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 
 		LogsFromTime: opts.LogsFromTime,
 
-		Added:        make(chan bool, 0),
-		Ready:        make(chan bool, 1),
-		Failed:       make(chan string, 1),
+		Added:  make(chan DaemonSetStatus, 1),
+		Ready:  make(chan DaemonSetStatus, 1),
+		Failed: make(chan DaemonSetStatus, 1),
+
 		EventMsg:     make(chan string, 1),
 		AddedPod:     make(chan replicaset.ReplicaSetPod, 10),
 		PodLogChunk:  make(chan *replicaset.ReplicaSetPodLogChunk, 1000),
@@ -119,52 +121,41 @@ func (d *Tracker) Track() error {
 	for {
 		select {
 		case object := <-d.resourceAdded:
-			ready, err := d.handleDaemonSetStatus(object)
-			if err != nil {
+			d.runPodsInformer()
+			d.runEventsInformer()
+
+			if err := d.handleDaemonSetState(object); err != nil {
 				if debug.Debug() {
 					fmt.Printf("handle DaemonSet state error: %v", err)
 				}
 				return err
 			}
-			if debug.Debug() {
-				fmt.Printf("DaemonSet `%s` initial ready state: %v\n", d.ResourceName, ready)
-			}
-
-			switch d.State {
-			case "":
-				d.State = "Started"
-				d.Added <- ready
-			}
-
-			d.runPodsInformer()
-			d.runEventsInformer()
 
 		case object := <-d.resourceModified:
-			ready, err := d.handleDaemonSetStatus(object)
-			if err != nil {
+			if err := d.handleDaemonSetState(object); err != nil {
 				return err
-			}
-			if ready {
-				d.Ready <- true
 			}
 
 		case <-d.resourceDeleted:
 			d.lastObject = nil
-			d.StatusReport <- DaemonSetStatus{}
-
-			d.State = "Deleted"
-			d.Failed <- "resource deleted"
-			// FIXME: this is not fail
+			d.State = tracker.ResourceDeleted
+			d.Failed <- DaemonSetStatus{IsFailed: true, FailedReason: "resource deleted"}
+			// TODO (longterm): This is not a fail, object may disappear then appear again.
+			// TODO (longterm): At this level tracker should allow that situation and still continue tracking.
 
 		case reason := <-d.resourceFailed:
-			d.State = "Failed"
+			d.State = tracker.ResourceFailed
 			d.failedReason = reason
 
+			var status DaemonSetStatus
 			if d.lastObject != nil {
 				d.statusGeneration++
-				d.StatusReport <- NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, d.getNewPodsNames())
+				status = NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
+			} else {
+				status = DaemonSetStatus{IsFailed: true, FailedReason: reason}
 			}
-			d.Failed <- reason
+
+			d.Failed <- status
 
 		case pod := <-d.podAdded:
 			if debug.Debug() {
@@ -200,7 +191,7 @@ func (d *Tracker) Track() error {
 			}
 			if d.lastObject != nil {
 				d.statusGeneration++
-				d.StatusReport <- NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, d.getNewPodsNames())
+				d.StatusReport <- NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 			}
 
 		case <-d.Context.Done():
@@ -375,7 +366,7 @@ func (d *Tracker) runPodTracker(podName string) error {
 	return nil
 }
 
-func (d *Tracker) handleDaemonSetStatus(object *appsv1.DaemonSet) (ready bool, err error) {
+func (d *Tracker) handleDaemonSetState(object *appsv1.DaemonSet) error {
 	if debug.Debug() {
 		fmt.Printf("%s\n", getDaemonSetStatus(object))
 	}
@@ -387,19 +378,24 @@ func (d *Tracker) handleDaemonSetStatus(object *appsv1.DaemonSet) (ready bool, e
 	d.lastObject = object
 
 	d.statusGeneration++
-
-	status := NewDaemonSetStatus(object, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, d.getNewPodsNames())
+	status := NewDaemonSetStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 
 	d.CurrentReady = status.IsReady
 
-	d.StatusReport <- status
-
-	if prevReady == false && d.CurrentReady == true {
-		d.FinalDaemonSetStatus = object.Status
-		ready = true
+	switch d.State {
+	case "":
+		d.State = tracker.ResourceAdded
+		d.Added <- status
+	default:
+		if prevReady == false && d.CurrentReady == true {
+			d.FinalDaemonSetStatus = object.Status
+			d.Ready <- status
+		} else {
+			d.StatusReport <- status
+		}
 	}
 
-	return
+	return nil
 }
 
 // runEventsInformer watch for DaemonSet events
