@@ -40,9 +40,10 @@ type Tracker struct {
 	podStatuses      map[string]pod.PodStatus
 	rsNameByPod      map[string]string
 
-	Added           chan bool
-	Ready           chan bool
-	Failed          chan string
+	Added  chan DeploymentStatus
+	Ready  chan DeploymentStatus
+	Failed chan DeploymentStatus
+
 	EventMsg        chan string
 	AddedReplicaSet chan replicaset.ReplicaSet
 	AddedPod        chan replicaset.ReplicaSetPod
@@ -82,9 +83,10 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 
 		LogsFromTime: opts.LogsFromTime,
 
-		Added:           make(chan bool, 0),
-		Ready:           make(chan bool, 1),
-		Failed:          make(chan string, 1),
+		Added:  make(chan DeploymentStatus, 1),
+		Ready:  make(chan DeploymentStatus, 1),
+		Failed: make(chan DeploymentStatus, 0),
+
 		EventMsg:        make(chan string, 1),
 		AddedReplicaSet: make(chan replicaset.ReplicaSet, 10),
 		AddedPod:        make(chan replicaset.ReplicaSetPod, 10),

@@ -81,7 +81,7 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 
 		Added:  make(chan DaemonSetStatus, 1),
 		Ready:  make(chan DaemonSetStatus, 1),
-		Failed: make(chan DaemonSetStatus, 1),
+		Failed: make(chan DaemonSetStatus, 0),
 
 		EventMsg:     make(chan string, 1),
 		AddedPod:     make(chan replicaset.ReplicaSetPod, 10),
