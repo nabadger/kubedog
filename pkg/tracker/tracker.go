@@ -14,7 +14,7 @@ var (
 )
 
 const (
-	Initial                TrackerState = "Initial"
+	Initial                TrackerState = ""
 	ResourceAdded          TrackerState = "ResourceAdded"
 	ResourceSucceeded      TrackerState = "ResourceSucceeded"
 	ResourceFailed         TrackerState = "ResourceFailed"

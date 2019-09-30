@@ -112,10 +112,6 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 // there is option StopOnAvailable — if true, watcher stops after DaemonSet has available status
 // you can define custom stop triggers using custom implementation of ControllerFeed.
 func (d *Tracker) Track() error {
-	if debug.Debug() {
-		fmt.Printf("> Tracker.Track()\n")
-	}
-
 	d.runDaemonSetInformer()
 
 	for {
@@ -125,9 +121,6 @@ func (d *Tracker) Track() error {
 			d.runEventsInformer()
 
 			if err := d.handleDaemonSetState(object); err != nil {
-				if debug.Debug() {
-					fmt.Printf("handle DaemonSet state error: %v", err)
-				}
 				return err
 			}
 
@@ -139,7 +132,8 @@ func (d *Tracker) Track() error {
 		case <-d.resourceDeleted:
 			d.lastObject = nil
 			d.State = tracker.ResourceDeleted
-			d.Failed <- DaemonSetStatus{IsFailed: true, FailedReason: "resource deleted"}
+			d.failedReason = "resource deleted"
+			d.Failed <- DaemonSetStatus{IsFailed: true, FailedReason: d.failedReason}
 			// TODO (longterm): This is not a fail, object may disappear then appear again.
 			// TODO (longterm): At this level tracker should allow that situation and still continue tracking.
 
@@ -154,7 +148,6 @@ func (d *Tracker) Track() error {
 			} else {
 				status = DaemonSetStatus{IsFailed: true, FailedReason: reason}
 			}
-
 			d.Failed <- status
 
 		case pod := <-d.podAdded:
@@ -383,7 +376,7 @@ func (d *Tracker) handleDaemonSetState(object *appsv1.DaemonSet) error {
 	d.CurrentReady = status.IsReady
 
 	switch d.State {
-	case "":
+	case tracker.Initial:
 		d.State = tracker.ResourceAdded
 		d.Added <- status
 	default:

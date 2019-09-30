@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/flant/kubedog/pkg/tracker"
@@ -27,7 +28,7 @@ type Tracker struct {
 	tracker.Tracker
 	LogsFromTime time.Time
 
-	State                 string
+	State                 tracker.TrackerState
 	Conditions            []string
 	FinalDeploymentStatus appsv1.DeploymentStatus
 	NewReplicaSetName     string
@@ -35,8 +36,8 @@ type Tracker struct {
 
 	knownReplicaSets map[string]*appsv1.ReplicaSet
 	lastObject       *appsv1.Deployment
-	statusGeneration uint64
 	failedReason     string
+	statusGeneration uint64
 	podStatuses      map[string]pod.PodStatus
 	rsNameByPod      map[string]string
 
@@ -135,57 +136,46 @@ func (d *Tracker) Track() (err error) {
 	for {
 		select {
 		case object := <-d.resourceAdded:
-			ready, err := d.handleDeploymentState(object)
-			if err != nil {
+			d.runReplicaSetsInformer()
+			d.runPodsInformer()
+			d.runEventsInformer(object)
+
+			if err := d.handleDeploymentState(object); err != nil {
 				if debug.Debug() {
 					fmt.Printf("handle deployment state error: %v", err)
 				}
 				return err
 			}
-			if debug.Debug() {
-				fmt.Printf("deployment `%s` initial ready state: %v\n", d.ResourceName, ready)
-			}
-
-			switch d.State {
-			case "":
-				d.State = "Started"
-				d.Added <- ready
-			}
-
-			d.runReplicaSetsInformer()
-			d.runPodsInformer()
-			d.runEventsInformer(object)
 
 		case object := <-d.resourceModified:
-			ready, err := d.handleDeploymentState(object)
-			if err != nil {
+			if err := d.handleDeploymentState(object); err != nil {
 				return err
-			}
-			if ready {
-				d.Ready <- true
 			}
 
 		case <-d.resourceDeleted:
 			d.lastObject = nil
-			d.State = "Deleted"
+			d.State = tracker.ResourceDeleted
 			d.failedReason = "resource deleted"
-			d.StatusReport <- DeploymentStatus{}
-			d.Failed <- d.failedReason
-			// TODO: This is not fail on tracker level
+			d.Failed <- DeploymentStatus{IsFailed: true, FailedReason: d.failedReason}
+			// TODO (longterm): This is not a fail, object may disappear then appear again.
+			// TODO (longterm): At this level tracker should allow that situation and still continue tracking.
 
 		case reason := <-d.resourceFailed:
-			d.State = "Failed"
+			d.State = tracker.ResourceFailed
 			d.failedReason = reason
 
+			var status DeploymentStatus
 			if d.lastObject != nil {
 				d.statusGeneration++
 				newPodsNames, err := d.getNewPodsNames()
 				if err != nil {
 					return err
 				}
-				d.StatusReport <- NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, newPodsNames)
+				status = NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+			} else {
+				status = DeploymentStatus{IsFailed: true, FailedReason: reason}
 			}
-			d.Failed <- reason
+			d.Failed <- status
 
 		case rs := <-d.replicaSetAdded:
 			if debug.Debug() {
@@ -475,7 +465,7 @@ func (d *Tracker) runPodTracker(podName, rsName string) error {
 	return nil
 }
 
-func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) (ready bool, err error) {
+func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 	if debug.Debug() {
 		fmt.Printf("%s\n%s\n",
 			getDeploymentStatus(d.Kube, d.lastObject, object),
@@ -485,7 +475,8 @@ func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) (ready bool, 
 	if debug.Debug() {
 		evList, err := utils.ListEventsForObject(d.Kube, object)
 		if err != nil {
-			return false, err
+			fmt.Fprintf(os.Stderr, "DEBUG: ERROR fetching list of events for deploy/%s in %s: %s\n", object.Name, object.Namespace, err)
+			return err
 		}
 		utils.DescribeEvents(evList)
 	}
@@ -500,20 +491,26 @@ func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) (ready bool, 
 
 	newPodsNames, err := d.getNewPodsNames()
 	if err != nil {
-		return false, err
+		return err
 	}
-	status := NewDeploymentStatus(object, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, newPodsNames)
+	status := NewDeploymentStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 
 	d.CurrentReady = status.IsReady
 
-	d.StatusReport <- status
-
-	if prevReady == false && d.CurrentReady == true {
-		d.FinalDeploymentStatus = object.Status
-		ready = true
+	switch d.State {
+	case tracker.Initial:
+		d.State = tracker.ResourceAdded
+		d.Added <- status
+	default:
+		if prevReady == false && d.CurrentReady == true {
+			d.FinalDeploymentStatus = object.Status
+			d.Ready <- status
+		} else {
+			d.StatusReport <- status
+		}
 	}
 
-	return
+	return nil
 }
 
 // runEventsInformer watch for Deployment events

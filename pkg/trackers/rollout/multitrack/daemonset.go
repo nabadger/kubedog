@@ -83,6 +83,8 @@ func (mt *multitracker) daemonsetReady(spec MultitrackSpec, feed daemonset.Feed,
 }
 
 func (mt *multitracker) daemonsetFailed(spec MultitrackSpec, feed daemonset.Feed, status daemonset.DaemonSetStatus) error {
+	mt.DaemonSetsStatuses[spec.ResourceName] = status
+
 	mt.displayResourceErrorF("ds", spec, "%s", status.FailedReason)
 
 	return mt.handleResourceFailure(mt.TrackingDaemonSets, "ds", spec, status.FailedReason)

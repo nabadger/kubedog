@@ -16,7 +16,11 @@ import (
 type Feed interface {
 	controller.ControllerFeed
 
+	OnAdded(func(DeploymentStatus) error)
+	OnReady(func(DeploymentStatus) error)
+	OnFailed(func(DeploymentStatus) error)
 	OnStatusReport(func(DeploymentStatus) error)
+
 	GetStatus() DeploymentStatus
 	Track(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error
 }
@@ -27,10 +31,26 @@ func NewFeed() Feed {
 
 type feed struct {
 	controller.CommonControllerFeed
+
+	OnAddedFunc        func(DeploymentStatus) error
+	OnReadyFunc        func(DeploymentStatus) error
+	OnFailedFunc       func(DeploymentStatus) error
 	OnStatusReportFunc func(DeploymentStatus) error
 
 	statusMux sync.Mutex
 	status    DeploymentStatus
+}
+
+func (f *feed) OnAdded(function func(DeploymentStatus) error) {
+	f.OnAddedFunc = function
+}
+
+func (f *feed) OnReady(function func(DeploymentStatus) error) {
+	f.OnReadyFunc = function
+}
+
+func (f *feed) OnFailed(function func(DeploymentStatus) error) {
+	f.OnFailedFunc = function
 }
 
 func (f *feed) OnStatusReport(function func(DeploymentStatus) error) {
@@ -68,13 +88,13 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 
 	for {
 		select {
-		case isReady := <-deploymentTracker.Added:
+		case status := <-deploymentTracker.Added:
 			if debug.Debug() {
 				fmt.Printf("    deploy/%s added\n", name)
 			}
 
 			if f.OnAddedFunc != nil {
-				err := f.OnAddedFunc(isReady)
+				err := f.OnAddedFunc(status)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -83,7 +103,7 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case <-deploymentTracker.Ready:
+		case status := <-deploymentTracker.Ready:
 			if debug.Debug() {
 				fmt.Printf("    deploy/%s ready: desired: %d, current: %d/%d, up-to-date: %d, available: %d\n",
 					name,
@@ -96,7 +116,7 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 			if f.OnReadyFunc != nil {
-				err := f.OnReadyFunc()
+				err := f.OnReadyFunc(status)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -105,13 +125,13 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case reason := <-deploymentTracker.Failed:
+		case status := <-deploymentTracker.Failed:
 			if debug.Debug() {
 				fmt.Printf("    deploy/%s failed. Tracker state: `%s`", name, deploymentTracker.State)
 			}
 
 			if f.OnFailedFunc != nil {
-				err := f.OnFailedFunc(reason)
+				err := f.OnFailedFunc(status)
 				if err == tracker.StopTrack {
 					return nil
 				}

@@ -27,7 +27,7 @@ type Tracker struct {
 	tracker.Tracker
 	LogsFromTime time.Time
 
-	State                  string
+	State                  tracker.TrackerState
 	Conditions             []string
 	FinalStatefulSetStatus appsv1.StatefulSetStatus
 	CurrentReady           bool
@@ -38,9 +38,10 @@ type Tracker struct {
 	podStatuses      map[string]pod.PodStatus
 	podRevisions     map[string]string
 
-	Added        chan bool
-	Ready        chan bool
-	Failed       chan string
+	Added  chan StatefulSetStatus
+	Ready  chan StatefulSetStatus
+	Failed chan StatefulSetStatus
+
 	EventMsg     chan string
 	AddedPod     chan replicaset.ReplicaSetPod
 	PodLogChunk  chan *replicaset.ReplicaSetPodLogChunk
@@ -74,9 +75,10 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 
 		LogsFromTime: opts.LogsFromTime,
 
-		Added:        make(chan bool, 0),
-		Ready:        make(chan bool, 1),
-		Failed:       make(chan string, 1),
+		Added:  make(chan StatefulSetStatus, 1),
+		Ready:  make(chan StatefulSetStatus, 1),
+		Failed: make(chan StatefulSetStatus, 0),
+
 		EventMsg:     make(chan string, 1),
 		AddedPod:     make(chan replicaset.ReplicaSetPod, 10),
 		PodLogChunk:  make(chan *replicaset.ReplicaSetPodLogChunk, 1000),
@@ -106,52 +108,43 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 // there is option StopOnAvailable — if true, watcher stops after StatefulSet has available status
 // you can define custom stop triggers using custom implementation of ControllerFeed.
 func (d *Tracker) Track() (err error) {
-	if debug.Debug() {
-		fmt.Printf("> Tracker.Track()\n")
-	}
-
 	d.runStatefulSetInformer()
 
 	for {
 		select {
 		case object := <-d.resourceAdded:
-			ready := d.handleStatefulSetState(object)
-			if debug.Debug() {
-				fmt.Printf("StatefulSet `%s` initial ready state: %v\n", d.ResourceName, ready)
-			}
-
-			switch d.State {
-			case "":
-				d.State = "Started"
-
-				d.Added <- ready
-			}
-
 			d.runPodsInformer()
 			d.runEventsInformer()
 
-		case object := <-d.resourceModified:
-			ready := d.handleStatefulSetState(object)
-			if ready {
-				d.Ready <- true
+			if err := d.handleStatefulSetState(object); err != nil {
+				return err
 			}
+
+		case object := <-d.resourceModified:
+			if err := d.handleStatefulSetState(object); err != nil {
+				return err
+			}
+
 		case <-d.resourceDeleted:
 			d.lastObject = nil
-			d.State = "Deleted"
+			d.State = tracker.ResourceDeleted
 			d.failedReason = "resource deleted"
-			d.StatusReport <- StatefulSetStatus{}
-			d.Failed <- d.failedReason
-			// TODO: This is not fail on tracker level
+			d.Failed <- StatefulSetStatus{IsFailed: true, FailedReason: d.failedReason}
+			// TODO (longterm): This is not a fail, object may disappear then appear again.
+			// TODO (longterm): At this level tracker should allow that situation and still continue tracking.
 
 		case reason := <-d.resourceFailed:
-			d.State = "Failed"
+			d.State = tracker.ResourceFailed
 			d.failedReason = reason
 
+			var status StatefulSetStatus
 			if d.lastObject != nil {
 				d.statusGeneration++
-				d.StatusReport <- NewStatefulSetStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, d.getNewPodsNames())
+				status = NewStatefulSetStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
+			} else {
+				status = StatefulSetStatus{IsFailed: true, FailedReason: reason}
 			}
-			d.Failed <- reason
+			d.Failed <- status
 
 		case pod := <-d.podAdded:
 			if debug.Debug() {
@@ -348,7 +341,7 @@ func (d *Tracker) runPodTracker(podName string) error {
 	return nil
 }
 
-func (d *Tracker) handleStatefulSetState(object *appsv1.StatefulSet) (ready bool) {
+func (d *Tracker) handleStatefulSetState(object *appsv1.StatefulSet) error {
 	if debug.Debug() {
 		fmt.Printf("%s\n", getStatefulSetStatus(object))
 		msg, ready, err := StatefulSetRolloutStatus(object)
@@ -369,19 +362,24 @@ func (d *Tracker) handleStatefulSetState(object *appsv1.StatefulSet) (ready bool
 	d.lastObject = object
 
 	d.statusGeneration++
-
-	status := NewStatefulSetStatus(object, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, d.getNewPodsNames())
+	status := NewStatefulSetStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 
 	d.CurrentReady = status.IsReady
 
-	d.StatusReport <- status
-
-	if prevReady == false && d.CurrentReady == true {
-		d.FinalStatefulSetStatus = object.Status
-		ready = true
+	switch d.State {
+	case tracker.Initial:
+		d.State = tracker.ResourceAdded
+		d.Added <- status
+	default:
+		if prevReady == false && d.CurrentReady == true {
+			d.FinalStatefulSetStatus = object.Status
+			d.Ready <- status
+		} else {
+			d.StatusReport <- status
+		}
 	}
 
-	return
+	return nil
 }
 
 // runEventsInformer watch for StatefulSet events

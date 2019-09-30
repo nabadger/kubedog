@@ -11,20 +11,20 @@ import (
 func (mt *multitracker) TrackDeployment(kube kubernetes.Interface, spec MultitrackSpec, opts MultitrackOptions) error {
 	feed := deployment.NewFeed()
 
-	feed.OnAdded(func(ready bool) error {
+	feed.OnAdded(func(status deployment.DeploymentStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.deploymentAdded(spec, feed, ready)
+		return mt.deploymentAdded(spec, feed, status)
 	})
-	feed.OnReady(func() error {
+	feed.OnReady(func(status deployment.DeploymentStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.deploymentReady(spec, feed)
+		return mt.deploymentReady(spec, feed, status)
 	})
-	feed.OnFailed(func(reason string) error {
+	feed.OnFailed(func(status deployment.DeploymentStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.deploymentFailed(spec, feed, reason)
+		return mt.deploymentFailed(spec, feed, status)
 	})
 	feed.OnEventMsg(func(msg string) error {
 		mt.mux.Lock()
@@ -60,10 +60,10 @@ func (mt *multitracker) TrackDeployment(kube kubernetes.Interface, spec Multitra
 	return feed.Track(spec.ResourceName, spec.Namespace, kube, opts.Options)
 }
 
-func (mt *multitracker) deploymentAdded(spec MultitrackSpec, feed deployment.Feed, ready bool) error {
-	mt.DeploymentsStatuses[spec.ResourceName] = feed.GetStatus()
+func (mt *multitracker) deploymentAdded(spec MultitrackSpec, feed deployment.Feed, status deployment.DeploymentStatus) error {
+	mt.DeploymentsStatuses[spec.ResourceName] = status
 
-	if ready {
+	if status.IsReady {
 		mt.displayResourceTrackerMessageF("deploy", spec, "appears to be READY")
 
 		return mt.handleResourceReadyCondition(mt.TrackingDeployments, spec)
@@ -74,17 +74,20 @@ func (mt *multitracker) deploymentAdded(spec MultitrackSpec, feed deployment.Fee
 	return nil
 }
 
-func (mt *multitracker) deploymentReady(spec MultitrackSpec, feed deployment.Feed) error {
-	mt.DeploymentsStatuses[spec.ResourceName] = feed.GetStatus()
+func (mt *multitracker) deploymentReady(spec MultitrackSpec, feed deployment.Feed, status deployment.DeploymentStatus) error {
+	mt.DeploymentsStatuses[spec.ResourceName] = status
 
 	mt.displayResourceTrackerMessageF("deploy", spec, "become READY")
 
 	return mt.handleResourceReadyCondition(mt.TrackingDeployments, spec)
 }
 
-func (mt *multitracker) deploymentFailed(spec MultitrackSpec, feed deployment.Feed, reason string) error {
-	mt.displayResourceErrorF("deploy", spec, "%s", reason)
-	return mt.handleResourceFailure(mt.TrackingDeployments, "deploy", spec, reason)
+func (mt *multitracker) deploymentFailed(spec MultitrackSpec, feed deployment.Feed, status deployment.DeploymentStatus) error {
+	mt.DeploymentsStatuses[spec.ResourceName] = status
+
+	mt.displayResourceErrorF("deploy", spec, "%s", status.FailedReason)
+
+	return mt.handleResourceFailure(mt.TrackingDeployments, "deploy", spec, status.FailedReason)
 }
 
 func (mt *multitracker) deploymentEventMsg(spec MultitrackSpec, feed deployment.Feed, msg string) error {

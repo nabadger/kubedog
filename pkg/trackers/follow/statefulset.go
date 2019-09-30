@@ -15,20 +15,20 @@ import (
 func TrackStatefulSet(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
 	feed := statefulset.NewFeed()
 
-	feed.OnAdded(func(ready bool) error {
-		if ready {
+	feed.OnAdded(func(status statefulset.StatefulSetStatus) error {
+		if status.IsReady {
 			fmt.Fprintf(display.Out, "# sts/%s appears to be ready\n", name)
 		} else {
 			fmt.Fprintf(display.Out, "# sts/%s added\n", name)
 		}
 		return nil
 	})
-	feed.OnReady(func() error {
+	feed.OnReady(func(status statefulset.StatefulSetStatus) error {
 		fmt.Fprintf(display.Out, "# sts/%s become READY\n", name)
 		return nil
 	})
-	feed.OnFailed(func(reason string) error {
-		fmt.Fprintf(display.Out, "# sts/%s FAIL: %s\n", name, reason)
+	feed.OnFailed(func(status statefulset.StatefulSetStatus) error {
+		fmt.Fprintf(display.Out, "# sts/%s FAIL: %s\n", name, status.FailedReason)
 		return nil
 	})
 	feed.OnEventMsg(func(msg string) error {
