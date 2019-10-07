@@ -21,17 +21,23 @@ import (
 	"github.com/flant/kubedog/pkg/utils"
 )
 
+type Failed struct {
+	Status JobStatus
+	Reason string
+}
+
 type Tracker struct {
 	tracker.Tracker
 
-	Added        chan struct{}
+	Added        chan JobStatus
 	Succeeded    chan JobStatus
-	Failed       chan string
-	EventMsg     chan string
-	AddedPod     chan string
-	PodLogChunk  chan *pod.PodLogChunk
-	PodError     chan pod.PodError
+	Failed       chan Failed
 	StatusReport chan JobStatus
+
+	EventMsg    chan string
+	AddedPod    chan string
+	PodLogChunk chan *pod.PodLogChunk
+	PodError    chan pod.PodError
 
 	State                 tracker.TrackerState
 	TrackedPodsNames      []string
@@ -62,14 +68,15 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 			Context:          ctx,
 		},
 
-		Added:        make(chan struct{}, 0),
+		Added:        make(chan JobStatus, 1),
 		Succeeded:    make(chan JobStatus, 0),
-		Failed:       make(chan string, 0),
-		EventMsg:     make(chan string, 1),
-		AddedPod:     make(chan string, 10),
-		PodLogChunk:  make(chan *pod.PodLogChunk, 1000),
-		PodError:     make(chan pod.PodError, 0),
+		Failed:       make(chan Failed, 0),
 		StatusReport: make(chan JobStatus, 100),
+
+		EventMsg:    make(chan string, 1),
+		AddedPod:    make(chan string, 10),
+		PodLogChunk: make(chan *pod.PodLogChunk, 1000),
+		PodError:    make(chan pod.PodError, 0),
 
 		podStatuses: make(map[string]pod.PodStatus),
 

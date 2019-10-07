@@ -76,7 +76,7 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 		LogsFromTime: opts.LogsFromTime,
 
 		Added:  make(chan StatefulSetStatus, 1),
-		Ready:  make(chan StatefulSetStatus, 1),
+		Ready:  make(chan StatefulSetStatus, 0),
 		Failed: make(chan StatefulSetStatus, 0),
 
 		EventMsg:     make(chan string, 1),

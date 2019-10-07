@@ -80,7 +80,7 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 		LogsFromTime: opts.LogsFromTime,
 
 		Added:  make(chan DaemonSetStatus, 1),
-		Ready:  make(chan DaemonSetStatus, 1),
+		Ready:  make(chan DaemonSetStatus, 0),
 		Failed: make(chan DaemonSetStatus, 0),
 
 		EventMsg:     make(chan string, 1),
@@ -372,7 +372,6 @@ func (d *Tracker) handleDaemonSetState(object *appsv1.DaemonSet) error {
 
 	d.statusGeneration++
 	status := NewDaemonSetStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
-
 	d.CurrentReady = status.IsReady
 
 	switch d.State {

@@ -12,6 +12,8 @@ import (
 type PodStatus struct {
 	corev1.PodStatus
 
+	StatusGeneration uint64
+
 	StatusIndicator *indicators.StringEqualConditionIndicator
 	Age             string
 	Restarts        int32
@@ -20,15 +22,17 @@ type PodStatus struct {
 
 	IsReady      bool
 	IsFailed     bool
+	IsSucceeded  bool
 	FailedReason string
 }
 
-func NewPodStatus(pod *corev1.Pod, isTrackerFailed bool, trackerFailedReason string) PodStatus {
+func NewPodStatus(pod *corev1.Pod, statusGeneration uint64, trackedContainers []string, isTrackerFailed bool, trackerFailedReason string) PodStatus {
 	res := PodStatus{
-		PodStatus:       pod.Status,
-		TotalContainers: int32(len(pod.Spec.Containers)),
-		Age:             utils.TranslateTimestampSince(pod.CreationTimestamp),
-		StatusIndicator: &indicators.StringEqualConditionIndicator{},
+		PodStatus:        pod.Status,
+		TotalContainers:  int32(len(pod.Spec.Containers)),
+		Age:              utils.TranslateTimestampSince(pod.CreationTimestamp),
+		StatusIndicator:  &indicators.StringEqualConditionIndicator{},
+		StatusGeneration: statusGeneration,
 	}
 
 	for _, cond := range pod.Status.Conditions {
@@ -113,14 +117,17 @@ func NewPodStatus(pod *corev1.Pod, isTrackerFailed bool, trackerFailedReason str
 	res.Restarts = restarts
 	res.ReadyContainers = readyContainers
 
-	if pod.Status.Phase == "Failed" {
-		if !res.IsFailed {
+	if len(trackedContainers) == 0 {
+		switch pod.Status.Phase {
+		case corev1.PodSucceeded:
+			res.IsSucceeded = true
+		case corev1.PodFailed:
 			res.IsFailed = true
 			res.FailedReason = reason
 		}
 	}
 
-	if !res.IsReady && !res.IsFailed {
+	if !res.IsReady && !res.IsFailed && !res.IsSucceeded {
 		res.IsFailed = isTrackerFailed
 		res.FailedReason = trackerFailedReason
 	}

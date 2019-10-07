@@ -14,9 +14,10 @@ import (
 type Feed interface {
 	OnAdded(func() error)
 	OnSucceeded(func() error)
-	OnFailed(func(reason string) error)
-	OnEventMsg(func(msg string) error)
+	OnFailed(func(string) error)
 	OnReady(func() error)
+
+	OnEventMsg(func(msg string) error)
 	OnContainerLogChunk(func(*ContainerLogChunk) error)
 	OnContainerError(func(ContainerError) error)
 	OnStatusReport(func(PodStatus) error)
@@ -49,10 +50,10 @@ func (f *feed) OnAdded(function func() error) {
 func (f *feed) OnSucceeded(function func() error) {
 	f.OnSucceededFunc = function
 }
-func (f *feed) OnFailed(function func(reason string) error) {
+func (f *feed) OnFailed(function func(string) error) {
 	f.OnFailedFunc = function
 }
-func (f *feed) OnEventMsg(function func(msg string) error) {
+func (f *feed) OnEventMsg(function func(string) error) {
 	f.OnEventMsgFunc = function
 }
 func (f *feed) OnReady(function func() error) {
@@ -125,10 +126,8 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case <-pod.Added:
-			if debug.Debug() {
-				fmt.Printf("Pod `%s` added\n", pod.ResourceName)
-			}
+		case status := <-pod.Added:
+			f.setPodStatus(status)
 
 			if f.OnAddedFunc != nil {
 				err := f.OnAddedFunc()
@@ -140,10 +139,8 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case <-pod.Succeeded:
-			if debug.Debug() {
-				fmt.Printf("Pod `%s` succeeded\n", pod.ResourceName)
-			}
+		case status := <-pod.Succeeded:
+			f.setPodStatus(status)
 
 			if f.OnSucceededFunc != nil {
 				err := f.OnSucceededFunc()
@@ -155,13 +152,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case reason := <-pod.Failed:
-			if debug.Debug() {
-				fmt.Printf("Pod `%s` failed: %s\n", pod.ResourceName, reason)
-			}
+		case failed := <-pod.Failed:
+			f.setPodStatus(failed.Status)
 
 			if f.OnFailedFunc != nil {
-				err := f.OnFailedFunc(reason)
+				err := f.OnFailedFunc(failed.Reason)
 				if err == tracker.StopTrack {
 					return nil
 				}

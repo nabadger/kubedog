@@ -14,11 +14,13 @@ var (
 )
 
 const (
-	Initial                TrackerState = ""
-	ResourceAdded          TrackerState = "ResourceAdded"
-	ResourceSucceeded      TrackerState = "ResourceSucceeded"
-	ResourceFailed         TrackerState = "ResourceFailed"
-	ResourceDeleted        TrackerState = "ResourceDeleted"
+	Initial           TrackerState = ""
+	ResourceAdded     TrackerState = "ResourceAdded"
+	ResourceSucceeded TrackerState = "ResourceSucceeded"
+	ResourceReady     TrackerState = "ResourceReady"
+	ResourceFailed    TrackerState = "ResourceFailed"
+	ResourceDeleted   TrackerState = "ResourceDeleted"
+
 	FollowingContainerLogs TrackerState = "FollowingContainerLogs"
 	ContainerTrackerDone   TrackerState = "ContainerTrackerDone"
 )
@@ -31,6 +33,8 @@ type Tracker struct {
 	ResourceName     string
 	FullResourceName string // full resource name with resource kind (deploy/superapp)
 	Context          context.Context
+
+	// TODO: statusGeneration uint64
 }
 
 type Options struct {
