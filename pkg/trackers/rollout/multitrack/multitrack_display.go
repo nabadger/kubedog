@@ -227,7 +227,7 @@ func (mt *multitracker) displayJobsProgress() {
 		showProgress := (status.StatusGeneration > prevStatus.StatusGeneration)
 		disableWarningColors := (spec.FailMode == IgnoreAndContinueDeployProcess)
 
-		resource := formatResourceCaption(name, spec.FailMode, status.IsComplete, status.IsFailed, true)
+		resource := formatResourceCaption(name, spec.FailMode, status.IsSucceeded, status.IsFailed, true)
 
 		succeeded := "-"
 		if status.SucceededIndicator != nil {

@@ -180,10 +180,8 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case <-pod.Ready:
-			if debug.Debug() {
-				fmt.Printf("Pod `%s` ready\n", pod.ResourceName)
-			}
+		case status := <-pod.Ready:
+			f.setPodStatus(status)
 
 			if f.OnReadyFunc != nil {
 				err := f.OnReadyFunc()

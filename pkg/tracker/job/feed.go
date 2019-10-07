@@ -94,10 +94,8 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 
 	for {
 		select {
-		case <-job.Added:
-			if debug.Debug() {
-				fmt.Printf("Job `%s` added\n", job.ResourceName)
-			}
+		case status := <-job.Added:
+			f.setStatus(status)
 
 			if f.OnAddedFunc != nil {
 				err := f.OnAddedFunc()
@@ -122,13 +120,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case reason := <-job.Failed:
-			if debug.Debug() {
-				fmt.Printf("Job `%s` failed: %s\n", job.ResourceName, reason)
-			}
+		case failed := <-job.Failed:
+			f.setStatus(failed.Status)
 
 			if f.OnFailedFunc != nil {
-				err := f.OnFailedFunc(reason)
+				err := f.OnFailedFunc(failed.Reason)
 				if err == tracker.StopTrack {
 					return nil
 				}

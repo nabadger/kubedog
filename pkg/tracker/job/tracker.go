@@ -18,7 +18,6 @@ import (
 	"github.com/flant/kubedog/pkg/tracker/debug"
 	"github.com/flant/kubedog/pkg/tracker/event"
 	"github.com/flant/kubedog/pkg/tracker/pod"
-	"github.com/flant/kubedog/pkg/utils"
 )
 
 type Failed struct {
@@ -39,10 +38,8 @@ type Tracker struct {
 	PodLogChunk chan *pod.PodLogChunk
 	PodError    chan pod.PodError
 
-	State                 tracker.TrackerState
-	TrackedPodsNames      []string
-	CurrentStatusComplete bool
-	CurrentStatusFailed   bool
+	State            tracker.TrackerState
+	TrackedPodsNames []string
 
 	lastObject       *batchv1.Job
 	statusGeneration uint64
@@ -94,6 +91,7 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 
 func (job *Tracker) Track() error {
 	var err error
+	var podsTrackersIsRunning bool
 
 	err = job.runInformer()
 	if err != nil {
@@ -105,14 +103,9 @@ func (job *Tracker) Track() error {
 		case object := <-job.objectAdded:
 			job.runEventsInformer()
 
-			switch job.State {
-			case tracker.Initial:
-				job.State = tracker.ResourceAdded
-				job.Added <- struct{}{}
-
-				err = job.runPodsTrackers(object)
-				if err != nil {
-					return err
+			if !podsTrackersIsRunning {
+				if err := job.runPodsTrackers(object); err != nil {
+					return fmt.Errorf("unable to track job %s pods: %s", job.ResourceName, err)
 				}
 			}
 
@@ -129,17 +122,23 @@ func (job *Tracker) Track() error {
 			job.State = tracker.ResourceFailed
 			job.failedReason = reason
 
+			var status JobStatus
 			if job.lastObject != nil {
 				job.statusGeneration++
-				job.StatusReport <- NewJobStatus(job.lastObject, job.statusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
+				status = NewJobStatus(job.lastObject, job.statusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
+			} else {
+				status = JobStatus{IsFailed: true, FailedReason: reason}
 			}
-			job.Failed <- reason
+			job.Failed <- Failed{status, status.FailedReason}
 
 		case <-job.objectDeleted:
-			if debug.Debug() {
-				fmt.Printf("Job `%s` resource gone: stop watching\n", job.ResourceName)
-			}
-			return nil
+			job.lastObject = nil
+			job.State = tracker.ResourceDeleted
+			job.failedReason = "resource deleted"
+			status := JobStatus{IsFailed: true, FailedReason: job.failedReason}
+			job.Failed <- Failed{status, status.FailedReason}
+			// TODO (longterm): This is not a fail, object may disappear then appear again.
+			// TODO (longterm): At this level tracker should allow that situation and still continue tracking.
 
 		case donePodsStatuses := <-job.podDone:
 			trackedPodsNames := make([]string, 0)
@@ -178,7 +177,6 @@ func (job *Tracker) Track() error {
 
 		case <-job.Context.Done():
 			return job.Context.Err()
-
 		case err := <-job.errors:
 			return err
 		}
@@ -239,31 +237,36 @@ func (job *Tracker) runInformer() error {
 }
 
 func (job *Tracker) handleJobState(object *batchv1.Job) error {
-	if debug.Debug() {
-		evList, err := utils.ListEventsForObject(job.Kube, object)
-		if err != nil {
-			return err
-		}
-		utils.DescribeEvents(evList)
-	}
-
 	job.lastObject = object
 	job.statusGeneration++
 
 	status := NewJobStatus(object, job.statusGeneration, job.State == tracker.ResourceFailed, job.failedReason, job.podStatuses, job.TrackedPodsNames)
-	job.StatusReport <- status
 
-	if job.State != tracker.ResourceFailed {
-		if !job.CurrentStatusComplete && status.IsComplete {
-			job.CurrentStatusComplete = true
-			job.Succeeded <- status
-			job.State = tracker.ResourceSucceeded
-		} else if !job.CurrentStatusFailed && status.IsFailed {
-			job.CurrentStatusFailed = true
-			job.Failed <- status.FailedReason
+	switch job.State {
+	case tracker.Initial:
+		if status.IsFailed {
 			job.State = tracker.ResourceFailed
-			job.failedReason = status.FailedReason
+			job.Failed <- Failed{status, status.FailedReason}
+		} else if status.IsSucceeded {
+			job.State = tracker.ResourceSucceeded
+			job.Succeeded <- status
+		} else {
+			job.State = tracker.ResourceAdded
+			job.Added <- status
 		}
+	case tracker.ResourceAdded:
+	case tracker.ResourceFailed:
+		if status.IsFailed {
+			job.State = tracker.ResourceFailed
+			job.Failed <- Failed{status, status.FailedReason}
+		} else if status.IsSucceeded {
+			job.State = tracker.ResourceSucceeded
+			job.Succeeded <- status
+		} else {
+			job.StatusReport <- status
+		}
+	case tracker.ResourceSucceeded:
+		job.StatusReport <- status
 	}
 
 	return nil

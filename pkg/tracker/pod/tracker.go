@@ -162,7 +162,7 @@ func (pod *Tracker) Start() error {
 				pod.ContainerTrackerStates[k] = tracker.ContainerTrackerDone
 			}
 
-			pod.Failed <- Failed{pod.LastStatus, pod.failedReason}
+			pod.Failed <- Failed{pod.LastStatus, pod.LastStatus.FailedReason}
 			// TODO (longterm): This is not a fail, object may disappear then appear again.
 			// TODO (longterm): At this level tracker should allow that situation and still continue tracking.
 
@@ -173,12 +173,12 @@ func (pod *Tracker) Start() error {
 			var status PodStatus
 			if pod.lastObject != nil {
 				pod.statusGeneration++
-				pod.LastStatus = NewPodStatus(pod.lastObject, pod.statusGeneration, pod.TrackedContainers, pod.State == tracker.ResourceFailed, pod.failedReason)
-				pod.StatusReport <- pod.LastStatus
+				status = NewPodStatus(pod.lastObject, pod.statusGeneration, pod.TrackedContainers, pod.State == tracker.ResourceFailed, pod.failedReason)
 			} else {
 				status = PodStatus{IsFailed: true, FailedReason: reason}
 			}
 
+			pod.LastStatus = status
 			pod.Failed <- Failed{status, reason}
 
 		case containerName := <-pod.containerDone:
