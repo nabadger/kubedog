@@ -14,55 +14,80 @@ func (mt *multitracker) TrackDaemonSet(kube kubernetes.Interface, spec Multitrac
 	feed.OnAdded(func(isReady bool) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetAdded(spec, feed, isReady)
 	})
 	feed.OnReady(func() error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetReady(spec, feed)
 	})
 	feed.OnFailed(func(reason string) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetFailed(spec, feed, reason)
 	})
 	feed.OnEventMsg(func(msg string) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetEventMsg(spec, feed, msg)
 	})
 	feed.OnAddedReplicaSet(func(rs replicaset.ReplicaSet) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetAddedReplicaSet(spec, feed, rs)
 	})
 	feed.OnAddedPod(func(pod replicaset.ReplicaSetPod) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetAddedPod(spec, feed, pod)
 	})
 	feed.OnPodError(func(podError replicaset.ReplicaSetPodError) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetPodError(spec, feed, podError)
 	})
 	feed.OnPodLogChunk(func(chunk *replicaset.ReplicaSetPodLogChunk) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
+
 		return mt.daemonsetPodLogChunk(spec, feed, chunk)
 	})
 	feed.OnStatusReport(func(status daemonset.DaemonSetStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.daemonsetStatusReport(spec, feed, status)
+
+		mt.DaemonSetsStatuses[spec.ResourceName] = status
+
+		return nil
 	})
 
 	return feed.Track(spec.ResourceName, spec.Namespace, kube, opts.Options)
 }
 
 func (mt *multitracker) daemonsetAdded(spec MultitrackSpec, feed daemonset.Feed, isReady bool) error {
-	mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
-
 	if isReady {
 		mt.displayResourceTrackerMessageF("ds", spec, "appears to be READY")
 
@@ -75,16 +100,12 @@ func (mt *multitracker) daemonsetAdded(spec MultitrackSpec, feed daemonset.Feed,
 }
 
 func (mt *multitracker) daemonsetReady(spec MultitrackSpec, feed daemonset.Feed) error {
-	mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
-
 	mt.displayResourceTrackerMessageF("ds", spec, "become READY")
 
 	return mt.handleResourceReadyCondition(mt.TrackingDaemonSets, spec)
 }
 
 func (mt *multitracker) daemonsetFailed(spec MultitrackSpec, feed daemonset.Feed, reason string) error {
-	mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
-
 	mt.displayResourceErrorF("ds", spec, "%s", reason)
 
 	return mt.handleResourceFailure(mt.TrackingDaemonSets, "ds", spec, reason)
@@ -114,18 +135,13 @@ func (mt *multitracker) daemonsetPodError(spec MultitrackSpec, feed daemonset.Fe
 }
 
 func (mt *multitracker) daemonsetPodLogChunk(spec MultitrackSpec, feed daemonset.Feed, chunk *replicaset.ReplicaSetPodLogChunk) error {
-	controllerStatus := feed.GetStatus()
-	if podStatus, hasKey := controllerStatus.Pods[chunk.PodName]; hasKey {
+	status := mt.DaemonSetsStatuses[spec.ResourceName]
+	if podStatus, hasKey := status.Pods[chunk.PodName]; hasKey {
 		if podStatus.IsReady {
 			return nil
 		}
 	}
 
 	mt.displayResourceLogChunk("ds", spec, podContainerLogChunkHeader(chunk.PodName, chunk.ContainerLogChunk), chunk.ContainerLogChunk)
-	return nil
-}
-
-func (mt *multitracker) daemonsetStatusReport(spec MultitrackSpec, feed daemonset.Feed, status daemonset.DaemonSetStatus) error {
-	mt.DaemonSetsStatuses[spec.ResourceName] = status
 	return nil
 }
