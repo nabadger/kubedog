@@ -17,8 +17,8 @@ import (
 func TrackStatefulSetTillReady(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
 	feed := statefulset.NewFeed()
 
-	feed.OnAdded(func(status statefulset.StatefulSetStatus) error {
-		if status.IsReady {
+	feed.OnAdded(func(isReady bool) error {
+		if isReady {
 			fmt.Fprintf(display.Out, "# sts/%s appears to be ready\n", name)
 			return tracker.StopTrack
 		}
@@ -26,13 +26,13 @@ func TrackStatefulSetTillReady(name, namespace string, kube kubernetes.Interface
 		fmt.Fprintf(display.Out, "# sts/%s added\n", name)
 		return nil
 	})
-	feed.OnReady(func(status statefulset.StatefulSetStatus) error {
+	feed.OnReady(func() error {
 		fmt.Fprintf(display.Out, "# sts/%s become READY\n", name)
 		return tracker.StopTrack
 	})
-	feed.OnFailed(func(status statefulset.StatefulSetStatus) error {
-		fmt.Fprintf(display.Out, "# sts/%s FAIL: %s\n", name, status.FailedReason)
-		return tracker.ResourceErrorf("failed: %s", status.FailedReason)
+	feed.OnFailed(func(reason string) error {
+		fmt.Fprintf(display.Out, "# sts/%s FAIL: %s\n", name, reason)
+		return tracker.ResourceErrorf("failed: %s", reason)
 	})
 	feed.OnEventMsg(func(msg string) error {
 		fmt.Fprintf(display.Out, "# sts/%s event: %s\n", name, msg)

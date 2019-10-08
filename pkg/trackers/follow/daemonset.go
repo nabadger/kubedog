@@ -15,15 +15,15 @@ import (
 func TrackDaemonSet(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
 	feed := daemonset.NewFeed()
 
-	feed.OnAdded(func(status daemonset.DaemonSetStatus) error {
-		if status.IsReady {
+	feed.OnAdded(func(isReady bool) error {
+		if isReady {
 			fmt.Fprintf(display.Out, "# ds/%s appears to be ready\n", name)
 		} else {
 			fmt.Fprintf(display.Out, "# ds/%s added\n", name)
 		}
 		return nil
 	})
-	feed.OnReady(func(status daemonset.DaemonSetStatus) error {
+	feed.OnReady(func() error {
 		fmt.Fprintf(display.Out, "# ds/%s become READY\n", name)
 		return nil
 	})
@@ -31,8 +31,8 @@ func TrackDaemonSet(name, namespace string, kube kubernetes.Interface, opts trac
 		fmt.Fprintf(display.Out, "# ds/%s event: %s\n", name, msg)
 		return nil
 	})
-	feed.OnFailed(func(status daemonset.DaemonSetStatus) error {
-		fmt.Fprintf(display.Out, "# ds/%s FAIL: %s\n", name, status.FailedReason)
+	feed.OnFailed(func(reason string) error {
+		fmt.Fprintf(display.Out, "# ds/%s FAIL: %s\n", name, reason)
 		return nil
 	})
 	feed.OnAddedPod(func(pod replicaset.ReplicaSetPod) error {

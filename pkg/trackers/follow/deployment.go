@@ -14,20 +14,20 @@ import (
 func TrackDeployment(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
 	feed := deployment.NewFeed()
 
-	feed.OnAdded(func(status deployment.DeploymentStatus) error {
-		if status.IsReady {
+	feed.OnAdded(func(isReady bool) error {
+		if isReady {
 			fmt.Fprintf(display.Out, "# deploy/%s appears to be ready\n", name)
 		} else {
 			fmt.Fprintf(display.Out, "# deploy/%s added\n", name)
 		}
 		return nil
 	})
-	feed.OnReady(func(status deployment.DeploymentStatus) error {
+	feed.OnReady(func() error {
 		fmt.Fprintf(display.Out, "# deploy/%s become READY\n", name)
 		return nil
 	})
-	feed.OnFailed(func(status deployment.DeploymentStatus) error {
-		fmt.Fprintf(display.Out, "# deploy/%s FAIL: %s\n", name, status.FailedReason)
+	feed.OnFailed(func(reason string) error {
+		fmt.Fprintf(display.Out, "# deploy/%s FAIL: %s\n", name, reason)
 		return nil
 	})
 	feed.OnEventMsg(func(msg string) error {

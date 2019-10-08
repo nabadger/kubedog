@@ -16,9 +16,6 @@ import (
 type Feed interface {
 	controller.ControllerFeed
 
-	OnAdded(func(StatefulSetStatus) error)
-	OnReady(func(StatefulSetStatus) error)
-	OnFailed(func(StatefulSetStatus) error)
 	OnStatusReport(func(StatefulSetStatus) error)
 
 	GetStatus() StatefulSetStatus
@@ -32,25 +29,10 @@ func NewFeed() Feed {
 type feed struct {
 	controller.CommonControllerFeed
 
-	OnAddedFunc        func(StatefulSetStatus) error
-	OnReadyFunc        func(StatefulSetStatus) error
-	OnFailedFunc       func(StatefulSetStatus) error
 	OnStatusReportFunc func(StatefulSetStatus) error
 
 	statusMux sync.Mutex
 	status    StatefulSetStatus
-}
-
-func (f *feed) OnAdded(function func(StatefulSetStatus) error) {
-	f.OnAddedFunc = function
-}
-
-func (f *feed) OnReady(function func(StatefulSetStatus) error) {
-	f.OnReadyFunc = function
-}
-
-func (f *feed) OnFailed(function func(StatefulSetStatus) error) {
-	f.OnFailedFunc = function
 }
 
 func (f *feed) OnStatusReport(function func(StatefulSetStatus) error) {
@@ -89,12 +71,10 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 	for {
 		select {
 		case status := <-stsTracker.Added:
-			if debug.Debug() {
-				fmt.Printf("    statefulset/%s added\n", name)
-			}
+			f.setStatus(status)
 
 			if f.OnAddedFunc != nil {
-				err := f.OnAddedFunc(status)
+				err := f.OnAddedFunc(status.IsReady)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -104,18 +84,10 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case status := <-stsTracker.Ready:
-			if debug.Debug() {
-				fmt.Printf("    statefulset/%s ready: desired: %d, current: %d, updated: %d, ready: %d\n",
-					name,
-					stsTracker.FinalStatefulSetStatus.Replicas,
-					stsTracker.FinalStatefulSetStatus.CurrentReplicas,
-					stsTracker.FinalStatefulSetStatus.UpdatedReplicas,
-					stsTracker.FinalStatefulSetStatus.ReadyReplicas,
-				)
-			}
+			f.setStatus(status)
 
 			if f.OnReadyFunc != nil {
-				err := f.OnReadyFunc(status)
+				err := f.OnReadyFunc()
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -125,12 +97,10 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case status := <-stsTracker.Failed:
-			if debug.Debug() {
-				fmt.Printf("    statefulset/%s failed. Tracker state: `%s`\n", name, stsTracker.State)
-			}
+			f.setStatus(status)
 
 			if f.OnFailedFunc != nil {
-				err := f.OnFailedFunc(status)
+				err := f.OnFailedFunc(status.FailedReason)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -218,7 +188,6 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 
 		case err := <-errorChan:
 			return err
-
 		case <-doneChan:
 			return nil
 		}

@@ -12,20 +12,20 @@ import (
 func (mt *multitracker) TrackStatefulSet(kube kubernetes.Interface, spec MultitrackSpec, opts MultitrackOptions) error {
 	feed := statefulset.NewFeed()
 
-	feed.OnAdded(func(status statefulset.StatefulSetStatus) error {
+	feed.OnAdded(func(isReady bool) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.statefulsetAdded(spec, feed, status)
+		return mt.statefulsetAdded(spec, feed, isReady)
 	})
-	feed.OnReady(func(status statefulset.StatefulSetStatus) error {
+	feed.OnReady(func() error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.statefulsetReady(spec, feed, status)
+		return mt.statefulsetReady(spec, feed)
 	})
-	feed.OnFailed(func(status statefulset.StatefulSetStatus) error {
+	feed.OnFailed(func(reason string) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.statefulsetFailed(spec, feed, status)
+		return mt.statefulsetFailed(spec, feed, reason)
 	})
 	feed.OnEventMsg(func(msg string) error {
 		mt.mux.Lock()
@@ -61,10 +61,10 @@ func (mt *multitracker) TrackStatefulSet(kube kubernetes.Interface, spec Multitr
 	return feed.Track(spec.ResourceName, spec.Namespace, kube, opts.Options)
 }
 
-func (mt *multitracker) statefulsetAdded(spec MultitrackSpec, feed statefulset.Feed, status statefulset.StatefulSetStatus) error {
-	mt.StatefulSetsStatuses[spec.ResourceName] = status
+func (mt *multitracker) statefulsetAdded(spec MultitrackSpec, feed statefulset.Feed, isReady bool) error {
+	mt.StatefulSetsStatuses[spec.ResourceName] = feed.GetStatus()
 
-	if status.IsReady {
+	if isReady {
 		mt.displayResourceTrackerMessageF("sts", spec, "appears to be READY")
 
 		return mt.handleResourceReadyCondition(mt.TrackingStatefulSets, spec)
@@ -75,8 +75,8 @@ func (mt *multitracker) statefulsetAdded(spec MultitrackSpec, feed statefulset.F
 	return nil
 }
 
-func (mt *multitracker) statefulsetReady(spec MultitrackSpec, feed statefulset.Feed, status statefulset.StatefulSetStatus) error {
-	mt.StatefulSetsStatuses[spec.ResourceName] = status
+func (mt *multitracker) statefulsetReady(spec MultitrackSpec, feed statefulset.Feed) error {
+	mt.StatefulSetsStatuses[spec.ResourceName] = feed.GetStatus()
 
 	mt.displayResourceTrackerMessageF("sts", spec, "become READY")
 
@@ -92,15 +92,15 @@ func (mt *multitracker) handlePostOperationCouldNotBeCompleted(spec MultitrackSp
 	return nil
 }
 
-func (mt *multitracker) statefulsetFailed(spec MultitrackSpec, feed statefulset.Feed, status statefulset.StatefulSetStatus) error {
-	mt.StatefulSetsStatuses[spec.ResourceName] = status
+func (mt *multitracker) statefulsetFailed(spec MultitrackSpec, feed statefulset.Feed, reason string) error {
+	mt.StatefulSetsStatuses[spec.ResourceName] = feed.GetStatus()
 
-	if mt.isPostOperationCouldNotBeCompletedError(status.FailedReason) {
-		return mt.handlePostOperationCouldNotBeCompleted(spec, status.FailedReason)
+	if mt.isPostOperationCouldNotBeCompletedError(reason) {
+		return mt.handlePostOperationCouldNotBeCompleted(spec, reason)
 	}
 
-	mt.displayResourceErrorF("sts", spec, "%s", status.FailedReason)
-	return mt.handleResourceFailure(mt.TrackingStatefulSets, "sts", spec, status.FailedReason)
+	mt.displayResourceErrorF("sts", spec, "%s", reason)
+	return mt.handleResourceFailure(mt.TrackingStatefulSets, "sts", spec, reason)
 }
 
 func (mt *multitracker) statefulsetEventMsg(spec MultitrackSpec, feed statefulset.Feed, msg string) error {

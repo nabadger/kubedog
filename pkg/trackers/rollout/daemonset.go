@@ -17,21 +17,21 @@ import (
 func TrackDaemonSetTillReady(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
 	feed := daemonset.NewFeed()
 
-	feed.OnAdded(func(status daemonset.DaemonSetStatus) error {
-		if status.IsReady {
+	feed.OnAdded(func(isReady bool) error {
+		if isReady {
 			fmt.Fprintf(display.Out, "# ds/%s appears to be ready. Exit\n", name)
 			return tracker.StopTrack
 		}
 		fmt.Fprintf(display.Out, "# ds/%s added\n", name)
 		return nil
 	})
-	feed.OnReady(func(status daemonset.DaemonSetStatus) error {
+	feed.OnReady(func() error {
 		fmt.Fprintf(display.Out, "# ds/%s become READY\n", name)
 		return tracker.StopTrack
 	})
-	feed.OnFailed(func(status daemonset.DaemonSetStatus) error {
-		fmt.Fprintf(display.Err, "# ds/%s FAIL: %s\n", name, status.FailedReason)
-		return tracker.ResourceErrorf("ds/%s failed: %s", name, status.FailedReason)
+	feed.OnFailed(func(reason string) error {
+		fmt.Fprintf(display.Err, "# ds/%s FAIL: %s\n", name, reason)
+		return tracker.ResourceErrorf("ds/%s failed: %s", name, reason)
 	})
 	feed.OnEventMsg(func(msg string) error {
 		fmt.Fprintf(display.Out, "# ds/%s event: %s\n", name, msg)

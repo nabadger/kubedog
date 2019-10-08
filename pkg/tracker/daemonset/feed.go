@@ -16,9 +16,6 @@ import (
 type Feed interface {
 	controller.ControllerFeed
 
-	OnAdded(func(DaemonSetStatus) error)
-	OnReady(func(DaemonSetStatus) error)
-	OnFailed(func(DaemonSetStatus) error)
 	OnStatusReport(func(DaemonSetStatus) error)
 
 	GetStatus() DaemonSetStatus
@@ -32,25 +29,10 @@ func NewFeed() Feed {
 type feed struct {
 	controller.CommonControllerFeed
 
-	OnAddedFunc        func(DaemonSetStatus) error
-	OnReadyFunc        func(DaemonSetStatus) error
-	OnFailedFunc       func(DaemonSetStatus) error
 	OnStatusReportFunc func(DaemonSetStatus) error
 
 	statusMux sync.Mutex
 	status    DaemonSetStatus
-}
-
-func (f *feed) OnAdded(function func(DaemonSetStatus) error) {
-	f.OnAddedFunc = function
-}
-
-func (f *feed) OnReady(function func(DaemonSetStatus) error) {
-	f.OnReadyFunc = function
-}
-
-func (f *feed) OnFailed(function func(DaemonSetStatus) error) {
-	f.OnFailedFunc = function
 }
 
 func (f *feed) OnStatusReport(function func(DaemonSetStatus) error) {
@@ -89,12 +71,10 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 	for {
 		select {
 		case status := <-daemonSetTracker.Added:
-			if debug.Debug() {
-				fmt.Printf("    ds/%s added\n", name)
-			}
+			f.setStatus(status)
 
 			if f.OnAddedFunc != nil {
-				err := f.OnAddedFunc(status)
+				err := f.OnAddedFunc(status.IsReady)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -105,18 +85,10 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case status := <-daemonSetTracker.Ready:
-			if debug.Debug() {
-				fmt.Printf("    ds/%s ready: desired: %d, current: %d, updated: %d, ready: %d\n",
-					name,
-					daemonSetTracker.FinalDaemonSetStatus.DesiredNumberScheduled,
-					daemonSetTracker.FinalDaemonSetStatus.CurrentNumberScheduled,
-					daemonSetTracker.FinalDaemonSetStatus.UpdatedNumberScheduled,
-					daemonSetTracker.FinalDaemonSetStatus.NumberReady,
-				)
-			}
+			f.setStatus(status)
 
 			if f.OnReadyFunc != nil {
-				err := f.OnReadyFunc(status)
+				err := f.OnReadyFunc()
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -126,12 +98,10 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case status := <-daemonSetTracker.Failed:
-			if debug.Debug() {
-				fmt.Printf("    ds/%s failed. Tracker state: `%s`", name, daemonSetTracker.State)
-			}
+			f.setStatus(status)
 
 			if f.OnFailedFunc != nil {
-				err := f.OnFailedFunc(status)
+				err := f.OnFailedFunc(status.FailedReason)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -141,10 +111,6 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case msg := <-daemonSetTracker.EventMsg:
-			if debug.Debug() {
-				fmt.Printf("    ds/%s event: %s\n", name, msg)
-			}
-
 			if f.OnEventMsgFunc != nil {
 				err := f.OnEventMsgFunc(msg)
 				if err == tracker.StopTrack {
@@ -218,7 +184,6 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 
 		case err := <-errorChan:
 			return err
-
 		case <-doneChan:
 			return nil
 		}

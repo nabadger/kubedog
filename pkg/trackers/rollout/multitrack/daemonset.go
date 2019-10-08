@@ -11,20 +11,20 @@ import (
 func (mt *multitracker) TrackDaemonSet(kube kubernetes.Interface, spec MultitrackSpec, opts MultitrackOptions) error {
 	feed := daemonset.NewFeed()
 
-	feed.OnAdded(func(status daemonset.DaemonSetStatus) error {
+	feed.OnAdded(func(isReady bool) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.daemonsetAdded(spec, feed, status)
+		return mt.daemonsetAdded(spec, feed, isReady)
 	})
-	feed.OnReady(func(status daemonset.DaemonSetStatus) error {
+	feed.OnReady(func() error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.daemonsetReady(spec, feed, status)
+		return mt.daemonsetReady(spec, feed)
 	})
-	feed.OnFailed(func(status daemonset.DaemonSetStatus) error {
+	feed.OnFailed(func(reason string) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
-		return mt.daemonsetFailed(spec, feed, status)
+		return mt.daemonsetFailed(spec, feed, reason)
 	})
 	feed.OnEventMsg(func(msg string) error {
 		mt.mux.Lock()
@@ -60,10 +60,10 @@ func (mt *multitracker) TrackDaemonSet(kube kubernetes.Interface, spec Multitrac
 	return feed.Track(spec.ResourceName, spec.Namespace, kube, opts.Options)
 }
 
-func (mt *multitracker) daemonsetAdded(spec MultitrackSpec, feed daemonset.Feed, status daemonset.DaemonSetStatus) error {
-	mt.DaemonSetsStatuses[spec.ResourceName] = status
+func (mt *multitracker) daemonsetAdded(spec MultitrackSpec, feed daemonset.Feed, isReady bool) error {
+	mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
 
-	if status.IsReady {
+	if isReady {
 		mt.displayResourceTrackerMessageF("ds", spec, "appears to be READY")
 
 		return mt.handleResourceReadyCondition(mt.TrackingDaemonSets, spec)
@@ -74,20 +74,20 @@ func (mt *multitracker) daemonsetAdded(spec MultitrackSpec, feed daemonset.Feed,
 	return nil
 }
 
-func (mt *multitracker) daemonsetReady(spec MultitrackSpec, feed daemonset.Feed, status daemonset.DaemonSetStatus) error {
-	mt.DaemonSetsStatuses[spec.ResourceName] = status
+func (mt *multitracker) daemonsetReady(spec MultitrackSpec, feed daemonset.Feed) error {
+	mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
 
 	mt.displayResourceTrackerMessageF("ds", spec, "become READY")
 
 	return mt.handleResourceReadyCondition(mt.TrackingDaemonSets, spec)
 }
 
-func (mt *multitracker) daemonsetFailed(spec MultitrackSpec, feed daemonset.Feed, status daemonset.DaemonSetStatus) error {
-	mt.DaemonSetsStatuses[spec.ResourceName] = status
+func (mt *multitracker) daemonsetFailed(spec MultitrackSpec, feed daemonset.Feed, reason string) error {
+	mt.DaemonSetsStatuses[spec.ResourceName] = feed.GetStatus()
 
-	mt.displayResourceErrorF("ds", spec, "%s", status.FailedReason)
+	mt.displayResourceErrorF("ds", spec, "%s", reason)
 
-	return mt.handleResourceFailure(mt.TrackingDaemonSets, "ds", spec, status.FailedReason)
+	return mt.handleResourceFailure(mt.TrackingDaemonSets, "ds", spec, reason)
 }
 
 func (mt *multitracker) daemonsetEventMsg(spec MultitrackSpec, feed daemonset.Feed, msg string) error {
