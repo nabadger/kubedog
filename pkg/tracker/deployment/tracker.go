@@ -476,7 +476,7 @@ func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 		evList, err := utils.ListEventsForObject(d.Kube, object)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "DEBUG: ERROR fetching list of events for deploy/%s in %s: %s\n", object.Name, object.Namespace, err)
-			return err
+			return nil
 		}
 		utils.DescribeEvents(evList)
 	}
