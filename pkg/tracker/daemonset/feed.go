@@ -16,7 +16,7 @@ import (
 type Feed interface {
 	controller.ControllerFeed
 
-	OnStatusReport(func(DaemonSetStatus) error)
+	OnStatus(func(DaemonSetStatus) error)
 
 	GetStatus() DaemonSetStatus
 	Track(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error
@@ -29,14 +29,14 @@ func NewFeed() Feed {
 type feed struct {
 	controller.CommonControllerFeed
 
-	OnStatusReportFunc func(DaemonSetStatus) error
+	OnStatusFunc func(DaemonSetStatus) error
 
 	statusMux sync.Mutex
 	status    DaemonSetStatus
 }
 
-func (f *feed) OnStatusReport(function func(DaemonSetStatus) error) {
-	f.OnStatusReportFunc = function
+func (f *feed) OnStatus(function func(DaemonSetStatus) error) {
+	f.OnStatusFunc = function
 }
 
 func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
@@ -121,13 +121,9 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case pod := <-daemonSetTracker.AddedPod:
-			if debug.Debug() {
-				fmt.Printf("    ds/%s po/%s added\n", daemonSetTracker.ResourceName, pod.Name)
-			}
-
+		case report := <-daemonSetTracker.AddedPod:
 			if f.OnAddedPodFunc != nil {
-				err := f.OnAddedPodFunc(pod)
+				err := f.OnAddedPodFunc(report.Pod)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -154,13 +150,9 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case podError := <-daemonSetTracker.PodError:
-			if debug.Debug() {
-				fmt.Printf("    ds/%s pod error: %s\n", daemonSetTracker.ResourceName, podError.Message)
-			}
-
+		case report := <-daemonSetTracker.PodError:
 			if f.OnPodErrorFunc != nil {
-				err := f.OnPodErrorFunc(podError)
+				err := f.OnPodErrorFunc(report.PodError)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -169,11 +161,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case status := <-daemonSetTracker.StatusReport:
+		case status := <-daemonSetTracker.Status:
 			f.setStatus(status)
 
-			if f.OnStatusReportFunc != nil {
-				err := f.OnStatusReportFunc(status)
+			if f.OnStatusFunc != nil {
+				err := f.OnStatusFunc(status)
 				if err == tracker.StopTrack {
 					return nil
 				}

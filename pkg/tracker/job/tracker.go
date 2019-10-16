@@ -175,7 +175,6 @@ func (job *Tracker) Track() error {
 
 				trackedPodsNames = append(trackedPodsNames, name)
 			}
-
 			job.TrackedPodsNames = trackedPodsNames
 
 			if err := job.handleJobState(job.lastObject); err != nil {
@@ -308,6 +307,8 @@ func (job *Tracker) handleJobState(object *batchv1.Job) error {
 }
 
 func (job *Tracker) runPodsTrackers(object *batchv1.Job) error {
+	// FIXME: use PodsInformer to track new pods
+
 	selector, err := metav1.LabelSelectorAsSelector(object.Spec.Selector)
 	if err != nil {
 		return err
