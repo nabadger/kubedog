@@ -16,7 +16,7 @@ import (
 type Feed interface {
 	controller.ControllerFeed
 
-	OnStatusReport(func(DeploymentStatus) error)
+	OnStatus(func(DeploymentStatus) error)
 
 	GetStatus() DeploymentStatus
 	Track(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error
@@ -29,14 +29,14 @@ func NewFeed() Feed {
 type feed struct {
 	controller.CommonControllerFeed
 
-	OnStatusReportFunc func(DeploymentStatus) error
+	OnStatusFunc func(DeploymentStatus) error
 
 	statusMux sync.Mutex
 	status    DeploymentStatus
 }
 
-func (f *feed) OnStatusReport(function func(DeploymentStatus) error) {
-	f.OnStatusReportFunc = function
+func (f *feed) OnStatus(function func(DeploymentStatus) error) {
+	f.OnStatusFunc = function
 }
 
 func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
@@ -110,10 +110,6 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case msg := <-deploymentTracker.EventMsg:
-			if debug.Debug() {
-				fmt.Printf("    deploy/%s event: %s\n", name, msg)
-			}
-
 			if f.OnEventMsgFunc != nil {
 				err := f.OnEventMsgFunc(msg)
 				if err == tracker.StopTrack {
@@ -124,13 +120,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case rs := <-deploymentTracker.AddedReplicaSet:
-			if debug.Debug() {
-				fmt.Printf("    deploy/%s got new replicaset `%s` (is new: %v)\n", deploymentTracker.ResourceName, rs.Name, rs.IsNew)
-			}
+		case report := <-deploymentTracker.AddedReplicaSet:
+			f.setStatus(report.DeploymentStatus)
 
 			if f.OnAddedReplicaSetFunc != nil {
-				err := f.OnAddedReplicaSetFunc(rs)
+				err := f.OnAddedReplicaSetFunc(report.ReplicaSet)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -139,13 +133,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case pod := <-deploymentTracker.AddedPod:
-			if debug.Debug() {
-				fmt.Printf("    deploy/%s got new pod `%s`\n", deploymentTracker.ResourceName, pod.Name)
-			}
+		case report := <-deploymentTracker.AddedPod:
+			f.setStatus(report.DeploymentStatus)
 
 			if f.OnAddedPodFunc != nil {
-				err := f.OnAddedPodFunc(pod)
+				err := f.OnAddedPodFunc(report.ReplicaSetPod)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -172,13 +164,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case podError := <-deploymentTracker.PodError:
-			if debug.Debug() {
-				fmt.Printf("    deploy/%s pod error: %s\n", deploymentTracker.ResourceName, podError.Message)
-			}
+		case report := <-deploymentTracker.PodError:
+			f.setStatus(report.DeploymentStatus)
 
 			if f.OnPodErrorFunc != nil {
-				err := f.OnPodErrorFunc(podError)
+				err := f.OnPodErrorFunc(report.ReplicaSetPodError)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -187,11 +177,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case status := <-deploymentTracker.StatusReport:
+		case status := <-deploymentTracker.Status:
 			f.setStatus(status)
 
-			if f.OnStatusReportFunc != nil {
-				err := f.OnStatusReportFunc(status)
+			if f.OnStatusFunc != nil {
+				err := f.OnStatusFunc(status)
 				if err == tracker.StopTrack {
 					return nil
 				}

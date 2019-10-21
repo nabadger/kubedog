@@ -24,6 +24,21 @@ import (
 	watchtools "k8s.io/client-go/tools/watch"
 )
 
+type ReplicaSetAddedReport struct {
+	ReplicaSet       replicaset.ReplicaSet
+	DeploymentStatus DeploymentStatus
+}
+
+type PodAddedReport struct {
+	ReplicaSetPod    replicaset.ReplicaSetPod
+	DeploymentStatus DeploymentStatus
+}
+
+type PodErrorReport struct {
+	ReplicaSetPodError replicaset.ReplicaSetPodError
+	DeploymentStatus   DeploymentStatus
+}
+
 type Tracker struct {
 	tracker.Tracker
 	LogsFromTime time.Time
@@ -41,38 +56,36 @@ type Tracker struct {
 	podStatuses      map[string]pod.PodStatus
 	rsNameByPod      map[string]string
 
+	TrackedPodsNames []string
+
 	Added  chan DeploymentStatus
 	Ready  chan DeploymentStatus
 	Failed chan DeploymentStatus
+	Status chan DeploymentStatus
 
 	EventMsg        chan string
-	AddedReplicaSet chan replicaset.ReplicaSet
-	AddedPod        chan replicaset.ReplicaSetPod
+	AddedReplicaSet chan ReplicaSetAddedReport
+	AddedPod        chan PodAddedReport
 	PodLogChunk     chan *replicaset.ReplicaSetPodLogChunk
-	PodError        chan replicaset.ReplicaSetPodError
-	StatusReport    chan DeploymentStatus
+	PodError        chan PodErrorReport
 
-	resourceAdded         chan *appsv1.Deployment
-	resourceModified      chan *appsv1.Deployment
-	resourceDeleted       chan *appsv1.Deployment
-	resourceFailed        chan string
-	replicaSetAdded       chan *appsv1.ReplicaSet
-	replicaSetModified    chan *appsv1.ReplicaSet
-	replicaSetDeleted     chan *appsv1.ReplicaSet
-	podAdded              chan *corev1.Pod
-	podDone               chan string
-	errors                chan error
-	podStatusesReport     chan map[string]pod.PodStatus
-	replicaSetPodLogChunk chan *replicaset.ReplicaSetPodLogChunk
-	replicaSetPodError    chan replicaset.ReplicaSetPodError
+	resourceAdded      chan *appsv1.Deployment
+	resourceModified   chan *appsv1.Deployment
+	resourceDeleted    chan *appsv1.Deployment
+	resourceFailed     chan string
+	replicaSetAdded    chan *appsv1.ReplicaSet
+	replicaSetModified chan *appsv1.ReplicaSet
+	replicaSetDeleted  chan *appsv1.ReplicaSet
+	errors             chan error
 
-	TrackedPods []string
+	podAddedRelay           chan *corev1.Pod
+	podStatusesRelay        chan map[string]pod.PodStatus
+	podLogChunksRelay       chan map[string]*pod.ContainerLogChunk
+	podContainerErrorsRelay chan map[string]pod.ContainerErrorReport
+	donePodsRelay           chan map[string]pod.PodStatus
 }
 
 func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Interface, opts tracker.Options) *Tracker {
-	if debug.Debug() {
-		fmt.Printf("> deployment.NewTracker\n")
-	}
 	return &Tracker{
 		Tracker: tracker.Tracker{
 			Kube:             kube,
@@ -87,35 +100,34 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 		Added:  make(chan DeploymentStatus, 1),
 		Ready:  make(chan DeploymentStatus, 0),
 		Failed: make(chan DeploymentStatus, 0),
+		Status: make(chan DeploymentStatus, 100),
 
 		EventMsg:        make(chan string, 1),
-		AddedReplicaSet: make(chan replicaset.ReplicaSet, 10),
-		AddedPod:        make(chan replicaset.ReplicaSetPod, 10),
+		AddedReplicaSet: make(chan ReplicaSetAddedReport, 10),
+		AddedPod:        make(chan PodAddedReport, 10),
 		PodLogChunk:     make(chan *replicaset.ReplicaSetPodLogChunk, 1000),
-		PodError:        make(chan replicaset.ReplicaSetPodError, 0),
-		StatusReport:    make(chan DeploymentStatus, 100),
-		//PodReady:        make(chan bool, 1),
+		PodError:        make(chan PodErrorReport, 0),
 
 		knownReplicaSets: make(map[string]*appsv1.ReplicaSet),
 		podStatuses:      make(map[string]pod.PodStatus),
 		rsNameByPod:      make(map[string]string),
 
-		TrackedPods: make([]string, 0),
+		TrackedPodsNames: make([]string, 0),
 
-		//PodError: make(chan PodError, 0),
-		resourceAdded:         make(chan *appsv1.Deployment, 1),
-		resourceModified:      make(chan *appsv1.Deployment, 1),
-		resourceDeleted:       make(chan *appsv1.Deployment, 1),
-		resourceFailed:        make(chan string, 1),
-		replicaSetAdded:       make(chan *appsv1.ReplicaSet, 1),
-		replicaSetModified:    make(chan *appsv1.ReplicaSet, 1),
-		replicaSetDeleted:     make(chan *appsv1.ReplicaSet, 1),
-		podAdded:              make(chan *corev1.Pod, 1),
-		podDone:               make(chan string, 1),
-		errors:                make(chan error, 0),
-		podStatusesReport:     make(chan map[string]pod.PodStatus),
-		replicaSetPodLogChunk: make(chan *replicaset.ReplicaSetPodLogChunk, 1000),
-		replicaSetPodError:    make(chan replicaset.ReplicaSetPodError, 1),
+		errors:             make(chan error, 0),
+		resourceAdded:      make(chan *appsv1.Deployment, 1),
+		resourceModified:   make(chan *appsv1.Deployment, 1),
+		resourceDeleted:    make(chan *appsv1.Deployment, 1),
+		resourceFailed:     make(chan string, 1),
+		replicaSetAdded:    make(chan *appsv1.ReplicaSet, 1),
+		replicaSetModified: make(chan *appsv1.ReplicaSet, 1),
+		replicaSetDeleted:  make(chan *appsv1.ReplicaSet, 1),
+
+		podAddedRelay:           make(chan *corev1.Pod, 1),
+		podStatusesRelay:        make(chan map[string]pod.PodStatus, 10),
+		podLogChunksRelay:       make(chan map[string]*pod.ContainerLogChunk, 10),
+		podContainerErrorsRelay: make(chan map[string]pod.ContainerErrorReport, 10),
+		donePodsRelay:           make(chan map[string]pod.PodStatus, 10),
 	}
 }
 
@@ -178,10 +190,6 @@ func (d *Tracker) Track() (err error) {
 			d.Failed <- status
 
 		case rs := <-d.replicaSetAdded:
-			if debug.Debug() {
-				fmt.Printf("rs/%s added\n", rs.Name)
-			}
-
 			d.knownReplicaSets[rs.Name] = rs
 
 			rsNew, err := utils.IsReplicaSetNew(d.lastObject, d.knownReplicaSets, rs.Name)
@@ -189,59 +197,87 @@ func (d *Tracker) Track() (err error) {
 				return err
 			}
 
-			d.AddedReplicaSet <- replicaset.ReplicaSet{
-				Name:  rs.Name,
-				IsNew: rsNew,
+			if d.lastObject != nil {
+				d.statusGeneration++
+				newPodsNames, err := d.getNewPodsNames()
+				if err != nil {
+					return err
+				}
+				status := NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+
+				d.AddedReplicaSet <- ReplicaSetAddedReport{
+					ReplicaSet: replicaset.ReplicaSet{
+						Name:  rs.Name,
+						IsNew: rsNew,
+					},
+					DeploymentStatus: status,
+				}
 			}
 
 		case rs := <-d.replicaSetModified:
-			if debug.Debug() {
-				fmt.Printf("rs/%s modified\n", rs.Name)
-			}
-
 			d.knownReplicaSets[rs.Name] = rs
 
 		case rs := <-d.replicaSetDeleted:
 			delete(d.knownReplicaSets, rs.Name)
 
-		case pod := <-d.podAdded:
-			if debug.Debug() {
-				fmt.Printf("po/%s added\n", pod.Name)
-			}
-
+		case pod := <-d.podAddedRelay:
 			rsName := utils.GetPodReplicaSetName(pod)
 			d.rsNameByPod[pod.Name] = rsName
 
-			rsNew, err := utils.IsReplicaSetNew(d.lastObject, d.knownReplicaSets, rsName)
-			if err != nil {
-				return err
-			}
+			if d.lastObject != nil {
+				d.statusGeneration++
+				newPodsNames, err := d.getNewPodsNames()
+				if err != nil {
+					return err
+				}
+				rsNew, err := utils.IsReplicaSetNew(d.lastObject, d.knownReplicaSets, rsName)
+				if err != nil {
+					return err
+				}
+				status := NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 
-			rsPod := replicaset.ReplicaSetPod{
-				Name: pod.Name,
-				ReplicaSet: replicaset.ReplicaSet{
-					Name:  rsName,
-					IsNew: rsNew,
-				},
-			}
-
-			d.AddedPod <- rsPod
-
-			err = d.runPodTracker(pod.Name, rsName)
-			if err != nil {
-				return err
-			}
-
-		case podName := <-d.podDone:
-			trackedPods := make([]string, 0)
-			for _, name := range d.TrackedPods {
-				if name != podName {
-					trackedPods = append(trackedPods, name)
+				d.AddedPod <- PodAddedReport{
+					ReplicaSetPod: replicaset.ReplicaSetPod{
+						Name: pod.Name,
+						ReplicaSet: replicaset.ReplicaSet{
+							Name:  rsName,
+							IsNew: rsNew,
+						},
+					},
+					DeploymentStatus: status,
 				}
 			}
-			d.TrackedPods = trackedPods
 
-		case podStatuses := <-d.podStatusesReport:
+			if err := d.runPodTracker(pod.Name, rsName); err != nil {
+				return err
+			}
+
+		case donePods := <-d.donePodsRelay:
+			trackedPodsNames := make([]string, 0)
+
+		trackedPodsIteration:
+			for _, name := range d.TrackedPodsNames {
+				for donePodName, status := range donePods {
+					if name == donePodName {
+						// This Pod is no more tracked,
+						// but we need to update final
+						// Pod's status
+						if _, hasKey := d.podStatuses[name]; hasKey {
+							d.podStatuses[name] = status
+						}
+						continue trackedPodsIteration
+					}
+				}
+
+				trackedPodsNames = append(trackedPodsNames, name)
+			}
+			d.TrackedPodsNames = trackedPodsNames
+
+			if err := d.handleDeploymentState(d.lastObject); err != nil {
+				return err
+			}
+
+		case podStatuses := <-d.podStatusesRelay:
 			for podName, podStatus := range podStatuses {
 				d.podStatuses[podName] = podStatus
 			}
@@ -251,28 +287,76 @@ func (d *Tracker) Track() (err error) {
 				if err != nil {
 					return err
 				}
-				d.StatusReport <- NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, newPodsNames)
+				d.Status <- NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, newPodsNames)
 			}
 
-		case rsChunk := <-d.replicaSetPodLogChunk:
-			rsNew, err := utils.IsReplicaSetNew(d.lastObject, d.knownReplicaSets, rsChunk.ReplicaSet.Name)
-			if err != nil {
-				return err
-			}
-			rsChunk.ReplicaSet.IsNew = rsNew
-			d.PodLogChunk <- rsChunk
+		case podLogChunks := <-d.podLogChunksRelay:
+			for podName, chunk := range podLogChunks {
+				rsName, hasKey := d.rsNameByPod[podName]
+				if !hasKey {
+					continue
+				}
 
-		case rsPodError := <-d.replicaSetPodError:
-			rsNew, err := utils.IsReplicaSetNew(d.lastObject, d.knownReplicaSets, rsPodError.ReplicaSet.Name)
-			if err != nil {
-				return err
+				rsNew, err := utils.IsReplicaSetNew(d.lastObject, d.knownReplicaSets, rsName)
+				if err != nil {
+					return err
+				}
+
+				rsChunk := &replicaset.ReplicaSetPodLogChunk{
+					PodLogChunk: &pod.PodLogChunk{
+						ContainerLogChunk: chunk,
+						PodName:           podName,
+					},
+					ReplicaSet: replicaset.ReplicaSet{
+						Name:  rsName,
+						IsNew: rsNew,
+					},
+				}
+				d.PodLogChunk <- rsChunk
 			}
-			rsPodError.ReplicaSet.IsNew = rsNew
-			d.PodError <- rsPodError
+
+		case podContainerErrors := <-d.podContainerErrorsRelay:
+			for podName, containerError := range podContainerErrors {
+				d.podStatuses[podName] = containerError.PodStatus
+			}
+			if d.lastObject != nil {
+				d.statusGeneration++
+				newPodsNames, err := d.getNewPodsNames()
+				if err != nil {
+					return err
+				}
+				status := NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, newPodsNames)
+
+				for podName, containerError := range podContainerErrors {
+					rsName, hasKey := d.rsNameByPod[podName]
+					if !hasKey {
+						continue
+					}
+
+					rsNew, err := utils.IsReplicaSetNew(d.lastObject, d.knownReplicaSets, rsName)
+					if err != nil {
+						return err
+					}
+
+					d.PodError <- PodErrorReport{
+						ReplicaSetPodError: replicaset.ReplicaSetPodError{
+							PodError: pod.PodError{
+								ContainerError: containerError.ContainerError,
+								PodName:        podName,
+							},
+							ReplicaSet: replicaset.ReplicaSet{
+								Name:  rsName,
+								IsNew: rsNew,
+							},
+						},
+						DeploymentStatus: status,
+					}
+				}
+
+			}
 
 		case <-d.Context.Done():
 			return d.Context.Err()
-
 		case err := <-d.errors:
 			return err
 		}
@@ -384,7 +468,7 @@ func (d *Tracker) runPodsInformer() {
 	}
 
 	podsInformer := pod.NewPodsInformer(&d.Tracker, utils.ControllerAccessor(d.lastObject))
-	podsInformer.WithChannels(d.podAdded, d.errors)
+	podsInformer.WithChannels(d.podAddedRelay, d.errors)
 	podsInformer.Run()
 
 	return
@@ -398,7 +482,7 @@ func (d *Tracker) runPodTracker(podName, rsName string) error {
 	if !d.LogsFromTime.IsZero() {
 		podTracker.LogsFromTime = d.LogsFromTime
 	}
-	d.TrackedPods = append(d.TrackedPods, podName)
+	d.TrackedPodsNames = append(d.TrackedPodsNames, podName)
 
 	go func() {
 		if debug.Debug() {
@@ -420,43 +504,29 @@ func (d *Tracker) runPodTracker(podName, rsName string) error {
 	go func() {
 		for {
 			select {
-			case chunk := <-podTracker.ContainerLogChunk:
-				rsChunk := &replicaset.ReplicaSetPodLogChunk{
-					PodLogChunk: &pod.PodLogChunk{
-						ContainerLogChunk: chunk,
-						PodName:           podTracker.ResourceName,
-					},
-					ReplicaSet: replicaset.ReplicaSet{
-						Name: rsName,
-					},
-				}
-				d.replicaSetPodLogChunk <- rsChunk
-
-			case containerError := <-podTracker.ContainerError:
-				podError := replicaset.ReplicaSetPodError{
-					PodError: pod.PodError{
-						ContainerError: containerError,
-						PodName:        podTracker.ResourceName,
-					},
-					ReplicaSet: replicaset.ReplicaSet{
-						Name: rsName,
-					},
-				}
-				d.replicaSetPodError <- podError
+			case status := <-podTracker.Added:
+				d.podStatusesRelay <- map[string]pod.PodStatus{podTracker.ResourceName: status}
+			case status := <-podTracker.Succeeded:
+				d.podStatusesRelay <- map[string]pod.PodStatus{podTracker.ResourceName: status}
+			case report := <-podTracker.Failed:
+				d.podStatusesRelay <- map[string]pod.PodStatus{podTracker.ResourceName: report.PodStatus}
+			case status := <-podTracker.Ready:
+				d.podStatusesRelay <- map[string]pod.PodStatus{podTracker.ResourceName: status}
+			case status := <-podTracker.Status:
+				d.podStatusesRelay <- map[string]pod.PodStatus{podTracker.ResourceName: status}
 
 			case msg := <-podTracker.EventMsg:
 				d.EventMsg <- fmt.Sprintf("po/%s %s", podTracker.ResourceName, msg)
-			case <-podTracker.Added:
-			case <-podTracker.Succeeded:
-			case <-podTracker.Failed:
-			case <-podTracker.Ready:
-			case podStatus := <-podTracker.StatusReport:
-				d.podStatusesReport <- map[string]pod.PodStatus{podTracker.ResourceName: podStatus}
+			case chunk := <-podTracker.ContainerLogChunk:
+				d.podLogChunksRelay <- map[string]*pod.ContainerLogChunk{podTracker.ResourceName: chunk}
+			case report := <-podTracker.ContainerError:
+				d.podContainerErrorsRelay <- map[string]pod.ContainerErrorReport{podTracker.ResourceName: report}
+
 			case err := <-errorChan:
 				d.errors <- err
 				return
 			case <-doneChan:
-				d.podDone <- podTracker.ResourceName
+				d.donePodsRelay <- map[string]pod.PodStatus{podTracker.ResourceName: podTracker.LastStatus}
 				return
 			}
 		}
@@ -465,6 +535,7 @@ func (d *Tracker) runPodTracker(podName, rsName string) error {
 	return nil
 }
 
+// FIXME: states
 func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 	if debug.Debug() {
 		fmt.Printf("%s\n%s\n",
@@ -506,7 +577,7 @@ func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 			d.FinalDeploymentStatus = object.Status
 			d.Ready <- status
 		} else {
-			d.StatusReport <- status
+			d.Status <- status
 		}
 	}
 

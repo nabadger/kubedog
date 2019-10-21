@@ -111,9 +111,10 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 		resourceFailed:   make(chan string, 1),
 		errors:           make(chan error, 0),
 
-		podAddedRelay:    make(chan *corev1.Pod, 1),
-		donePodsRelay:    make(chan string, 1),
-		podStatusesRelay: make(chan map[string]pod.PodStatus),
+		podAddedRelay:           make(chan *corev1.Pod, 1),
+		podStatusesRelay:        make(chan map[string]pod.PodStatus, 10),
+		podContainerErrorsRelay: make(chan map[string]pod.ContainerErrorReport, 10),
+		donePodsRelay:           make(chan map[string]pod.PodStatus, 1),
 	}
 }
 

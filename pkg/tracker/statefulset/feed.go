@@ -16,7 +16,7 @@ import (
 type Feed interface {
 	controller.ControllerFeed
 
-	OnStatusReport(func(StatefulSetStatus) error)
+	OnStatus(func(StatefulSetStatus) error)
 
 	GetStatus() StatefulSetStatus
 	Track(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error
@@ -29,14 +29,14 @@ func NewFeed() Feed {
 type feed struct {
 	controller.CommonControllerFeed
 
-	OnStatusReportFunc func(StatefulSetStatus) error
+	OnStatusFunc func(StatefulSetStatus) error
 
 	statusMux sync.Mutex
 	status    StatefulSetStatus
 }
 
-func (f *feed) OnStatusReport(function func(StatefulSetStatus) error) {
-	f.OnStatusReportFunc = function
+func (f *feed) OnStatus(function func(StatefulSetStatus) error) {
+	f.OnStatusFunc = function
 }
 
 func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tracker.Options) error {
@@ -110,10 +110,6 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case msg := <-stsTracker.EventMsg:
-			if debug.Debug() {
-				fmt.Printf("    statefulset/%s event: %s\n", name, msg)
-			}
-
 			if f.OnEventMsgFunc != nil {
 				err := f.OnEventMsgFunc(msg)
 				if err == tracker.StopTrack {
@@ -124,20 +120,17 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case rsPod := <-stsTracker.AddedPod:
-			if debug.Debug() {
-				fmt.Printf("    statefulset/%s got new pod `%s`\n", stsTracker.ResourceName, rsPod.Name)
-			}
+		case report := <-stsTracker.AddedPod:
+			f.setStatus(report.StatefulSetStatus)
 
 			if f.OnAddedPodFunc != nil {
-				err := f.OnAddedPodFunc(rsPod)
+				err := f.OnAddedPodFunc(report.ReplicaSetPod)
 				if err == tracker.StopTrack {
 					return nil
 				}
 				if err != nil {
 					return err
 				}
-
 			}
 
 		case chunk := <-stsTracker.PodLogChunk:
@@ -158,13 +151,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case podError := <-stsTracker.PodError:
-			if debug.Debug() {
-				fmt.Printf("    statefulset/%s pod error: %s\n", stsTracker.ResourceName, podError.Message)
-			}
+		case report := <-stsTracker.PodError:
+			f.setStatus(report.StatefulSetStatus)
 
 			if f.OnPodErrorFunc != nil {
-				err := f.OnPodErrorFunc(podError)
+				err := f.OnPodErrorFunc(report.ReplicaSetPodError)
 				if err == tracker.StopTrack {
 					return nil
 				}
@@ -173,11 +164,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case status := <-stsTracker.StatusReport:
+		case status := <-stsTracker.Status:
 			f.setStatus(status)
 
-			if f.OnStatusReportFunc != nil {
-				err := f.OnStatusReportFunc(status)
+			if f.OnStatusFunc != nil {
+				err := f.OnStatusFunc(status)
 				if err == tracker.StopTrack {
 					return nil
 				}
