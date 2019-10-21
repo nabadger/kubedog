@@ -67,7 +67,7 @@ func (mt *multitracker) TrackJob(kube kubernetes.Interface, spec MultitrackSpec,
 
 		return mt.jobPodError(spec, feed, podError)
 	})
-	feed.OnStatusReport(func(status job.JobStatus) error {
+	feed.OnStatus(func(status job.JobStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
 

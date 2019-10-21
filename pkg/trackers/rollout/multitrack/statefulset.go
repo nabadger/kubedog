@@ -76,7 +76,7 @@ func (mt *multitracker) TrackStatefulSet(kube kubernetes.Interface, spec Multitr
 
 		return mt.statefulsetPodLogChunk(spec, feed, chunk)
 	})
-	feed.OnStatusReport(func(status statefulset.StatefulSetStatus) error {
+	feed.OnStatus(func(status statefulset.StatefulSetStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
 

@@ -75,7 +75,7 @@ func (mt *multitracker) TrackDaemonSet(kube kubernetes.Interface, spec Multitrac
 
 		return mt.daemonsetPodLogChunk(spec, feed, chunk)
 	})
-	feed.OnStatusReport(func(status daemonset.DaemonSetStatus) error {
+	feed.OnStatus(func(status daemonset.DaemonSetStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
 

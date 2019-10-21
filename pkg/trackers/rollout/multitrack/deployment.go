@@ -75,7 +75,7 @@ func (mt *multitracker) TrackDeployment(kube kubernetes.Interface, spec Multitra
 
 		return mt.deploymentPodLogChunk(spec, feed, chunk)
 	})
-	feed.OnStatusReport(func(status deployment.DeploymentStatus) error {
+	feed.OnStatus(func(status deployment.DeploymentStatus) error {
 		mt.mux.Lock()
 		defer mt.mux.Unlock()
 
