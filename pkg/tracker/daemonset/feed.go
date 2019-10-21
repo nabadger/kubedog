@@ -122,6 +122,8 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case report := <-daemonSetTracker.AddedPod:
+			f.setStatus(report.DaemonSetStatus)
+
 			if f.OnAddedPodFunc != nil {
 				err := f.OnAddedPodFunc(report.Pod)
 				if err == tracker.StopTrack {
@@ -151,6 +153,8 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case report := <-daemonSetTracker.PodError:
+			f.setStatus(report.DaemonSetStatus)
+
 			if f.OnPodErrorFunc != nil {
 				err := f.OnPodErrorFunc(report.PodError)
 				if err == tracker.StopTrack {

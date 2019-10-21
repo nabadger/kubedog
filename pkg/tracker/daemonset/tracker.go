@@ -44,7 +44,6 @@ type Tracker struct {
 	State            tracker.TrackerState
 	TrackedPodsNames []string
 	Conditions       []string
-	CurrentReady     bool
 
 	Added  chan DaemonSetStatus
 	Ready  chan DaemonSetStatus
@@ -56,11 +55,10 @@ type Tracker struct {
 	PodLogChunk chan *replicaset.ReplicaSetPodLogChunk
 	PodError    chan PodErrorReport
 
-	lastObject       *appsv1.DaemonSet
-	statusGeneration uint64
-	failedReason     string
-	podStatuses      map[string]pod.PodStatus
-	podGenerations   map[string]string
+	lastObject     *appsv1.DaemonSet
+	failedReason   string
+	podStatuses    map[string]pod.PodStatus
+	podGenerations map[string]string
 
 	resourceAdded    chan *appsv1.DaemonSet
 	resourceModified chan *appsv1.DaemonSet
@@ -156,8 +154,8 @@ func (d *Tracker) Track() error {
 
 			var status DaemonSetStatus
 			if d.lastObject != nil {
-				d.statusGeneration++
-				status = NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
+				d.StatusGeneration++
+				status = NewDaemonSetStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 			} else {
 				status = DaemonSetStatus{IsFailed: true, FailedReason: reason}
 			}
@@ -167,8 +165,8 @@ func (d *Tracker) Track() error {
 			d.podGenerations[pod.Name] = pod.Labels["pod-template-generation"]
 
 			if d.lastObject != nil {
-				d.statusGeneration++
-				status := NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
+				d.StatusGeneration++
+				status := NewDaemonSetStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 				d.AddedPod <- PodAddedReport{
 					Pod: replicaset.ReplicaSetPod{
 						Name:       pod.Name,
@@ -213,8 +211,8 @@ func (d *Tracker) Track() error {
 				d.podStatuses[podName] = podStatus
 			}
 			if d.lastObject != nil {
-				d.statusGeneration++
-				d.Status <- NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
+				d.StatusGeneration++
+				d.Status <- NewDaemonSetStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 			}
 
 		case podContainerErrors := <-d.podContainerErrorsRelay:
@@ -222,8 +220,8 @@ func (d *Tracker) Track() error {
 				d.podStatuses[podName] = containerError.PodStatus
 			}
 			if d.lastObject != nil {
-				d.statusGeneration++
-				status := NewDaemonSetStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
+				d.StatusGeneration++
+				status := NewDaemonSetStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 
 				for podName, containerError := range podContainerErrors {
 					d.PodError <- PodErrorReport{
@@ -410,9 +408,9 @@ func (d *Tracker) runPodTracker(podName string) error {
 
 func (d *Tracker) handleDaemonSetState(object *appsv1.DaemonSet) error {
 	d.lastObject = object
-	d.statusGeneration++
+	d.StatusGeneration++
 
-	status := NewDaemonSetStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
+	status := NewDaemonSetStatus(object, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 
 	switch d.State {
 	case tracker.Initial:

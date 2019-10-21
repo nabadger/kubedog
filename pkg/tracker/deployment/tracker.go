@@ -45,12 +45,10 @@ type Tracker struct {
 	State             tracker.TrackerState
 	Conditions        []string
 	NewReplicaSetName string
-	CurrentReady      bool
 
 	knownReplicaSets map[string]*appsv1.ReplicaSet
 	lastObject       *appsv1.Deployment
 	failedReason     string
-	statusGeneration uint64
 	podStatuses      map[string]pod.PodStatus
 	rsNameByPod      map[string]string
 
@@ -176,12 +174,12 @@ func (d *Tracker) Track() (err error) {
 
 			var status DeploymentStatus
 			if d.lastObject != nil {
-				d.statusGeneration++
+				d.StatusGeneration++
 				newPodsNames, err := d.getNewPodsNames()
 				if err != nil {
 					return err
 				}
-				status = NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+				status = NewDeploymentStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 			} else {
 				status = DeploymentStatus{IsFailed: true, FailedReason: reason}
 			}
@@ -196,12 +194,12 @@ func (d *Tracker) Track() (err error) {
 			}
 
 			if d.lastObject != nil {
-				d.statusGeneration++
+				d.StatusGeneration++
 				newPodsNames, err := d.getNewPodsNames()
 				if err != nil {
 					return err
 				}
-				status := NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+				status := NewDeploymentStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 
 				d.AddedReplicaSet <- ReplicaSetAddedReport{
 					ReplicaSet: replicaset.ReplicaSet{
@@ -223,7 +221,7 @@ func (d *Tracker) Track() (err error) {
 			d.rsNameByPod[pod.Name] = rsName
 
 			if d.lastObject != nil {
-				d.statusGeneration++
+				d.StatusGeneration++
 				newPodsNames, err := d.getNewPodsNames()
 				if err != nil {
 					return err
@@ -232,7 +230,7 @@ func (d *Tracker) Track() (err error) {
 				if err != nil {
 					return err
 				}
-				status := NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+				status := NewDeploymentStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 
 				d.AddedPod <- PodAddedReport{
 					ReplicaSetPod: replicaset.ReplicaSetPod{
@@ -280,12 +278,12 @@ func (d *Tracker) Track() (err error) {
 				d.podStatuses[podName] = podStatus
 			}
 			if d.lastObject != nil {
-				d.statusGeneration++
+				d.StatusGeneration++
 				newPodsNames, err := d.getNewPodsNames()
 				if err != nil {
 					return err
 				}
-				d.Status <- NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, newPodsNames)
+				d.Status <- NewDeploymentStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 			}
 
 		case podLogChunks := <-d.podLogChunksRelay:
@@ -318,12 +316,12 @@ func (d *Tracker) Track() (err error) {
 				d.podStatuses[podName] = containerError.PodStatus
 			}
 			if d.lastObject != nil {
-				d.statusGeneration++
+				d.StatusGeneration++
 				newPodsNames, err := d.getNewPodsNames()
 				if err != nil {
 					return err
 				}
-				status := NewDeploymentStatus(d.lastObject, d.statusGeneration, (d.State == "Failed"), d.failedReason, d.podStatuses, newPodsNames)
+				status := NewDeploymentStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 
 				for podName, containerError := range podContainerErrors {
 					rsName, hasKey := d.rsNameByPod[podName]
@@ -535,13 +533,13 @@ func (d *Tracker) runPodTracker(podName, rsName string) error {
 
 func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 	d.lastObject = object
-	d.statusGeneration++
+	d.StatusGeneration++
 
 	newPodsNames, err := d.getNewPodsNames()
 	if err != nil {
 		return err
 	}
-	status := NewDeploymentStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+	status := NewDeploymentStatus(object, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 
 	switch d.State {
 	case tracker.Initial:

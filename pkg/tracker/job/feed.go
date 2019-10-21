@@ -207,7 +207,6 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 
 		case err := <-errorChan:
 			return err
-
 		case <-doneChan:
 			return nil
 		}

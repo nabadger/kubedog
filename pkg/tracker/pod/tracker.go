@@ -56,8 +56,6 @@ type ContainerErrorReport struct {
 type Tracker struct {
 	tracker.Tracker
 
-	statusGeneration uint64
-
 	Added     chan PodStatus
 	Succeeded chan PodStatus
 	Ready     chan PodStatus
@@ -178,8 +176,8 @@ func (pod *Tracker) Start() error {
 
 			var status PodStatus
 			if pod.lastObject != nil {
-				pod.statusGeneration++
-				status = NewPodStatus(pod.lastObject, pod.statusGeneration, pod.TrackedContainers, pod.State == tracker.ResourceFailed, pod.failedReason)
+				pod.StatusGeneration++
+				status = NewPodStatus(pod.lastObject, pod.StatusGeneration, pod.TrackedContainers, pod.State == tracker.ResourceFailed, pod.failedReason)
 			} else {
 				status = PodStatus{IsFailed: true, FailedReason: reason}
 			}
@@ -210,9 +208,9 @@ func (pod *Tracker) Start() error {
 
 func (pod *Tracker) handlePodState(object *corev1.Pod) error {
 	pod.lastObject = object
-	pod.statusGeneration++
+	pod.StatusGeneration++
 
-	status := NewPodStatus(object, pod.statusGeneration, pod.TrackedContainers, pod.State == tracker.ResourceFailed, pod.failedReason)
+	status := NewPodStatus(object, pod.StatusGeneration, pod.TrackedContainers, pod.State == tracker.ResourceFailed, pod.failedReason)
 	pod.LastStatus = status
 
 	if err := pod.handleContainersState(object); err != nil {

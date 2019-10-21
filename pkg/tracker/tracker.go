@@ -34,7 +34,7 @@ type Tracker struct {
 	FullResourceName string // full resource name with resource kind (deploy/superapp)
 	Context          context.Context
 
-	// TODO: statusGeneration uint64
+	StatusGeneration uint64
 }
 
 type Options struct {

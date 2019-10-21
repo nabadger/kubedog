@@ -51,10 +51,9 @@ type Tracker struct {
 	State            tracker.TrackerState
 	TrackedPodsNames []string
 
-	lastObject       *batchv1.Job
-	statusGeneration uint64
-	failedReason     string
-	podStatuses      map[string]pod.PodStatus
+	lastObject   *batchv1.Job
+	failedReason string
+	podStatuses  map[string]pod.PodStatus
 
 	objectAdded    chan *batchv1.Job
 	objectModified chan *batchv1.Job
@@ -140,8 +139,8 @@ func (job *Tracker) Track() error {
 
 			var status JobStatus
 			if job.lastObject != nil {
-				job.statusGeneration++
-				status = NewJobStatus(job.lastObject, job.statusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
+				job.StatusGeneration++
+				status = NewJobStatus(job.lastObject, job.StatusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
 			} else {
 				status = JobStatus{IsFailed: true, FailedReason: reason}
 			}
@@ -186,8 +185,8 @@ func (job *Tracker) Track() error {
 				job.podStatuses[podName] = podStatus
 			}
 			if job.lastObject != nil {
-				job.statusGeneration++
-				job.Status <- NewJobStatus(job.lastObject, job.statusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
+				job.StatusGeneration++
+				job.Status <- NewJobStatus(job.lastObject, job.StatusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
 			}
 
 		case podContainerErrors := <-job.podContainerErrorsRelay:
@@ -195,8 +194,8 @@ func (job *Tracker) Track() error {
 				job.podStatuses[podName] = containerError.PodStatus
 			}
 			if job.lastObject != nil {
-				job.statusGeneration++
-				status := NewJobStatus(job.lastObject, job.statusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
+				job.StatusGeneration++
+				status := NewJobStatus(job.lastObject, job.StatusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
 
 				for podName, containerError := range podContainerErrors {
 					job.PodError <- PodErrorReport{
@@ -272,9 +271,9 @@ func (job *Tracker) runInformer() error {
 
 func (job *Tracker) handleJobState(object *batchv1.Job) error {
 	job.lastObject = object
-	job.statusGeneration++
+	job.StatusGeneration++
 
-	status := NewJobStatus(object, job.statusGeneration, job.State == tracker.ResourceFailed, job.failedReason, job.podStatuses, job.TrackedPodsNames)
+	status := NewJobStatus(object, job.StatusGeneration, job.State == tracker.ResourceFailed, job.failedReason, job.podStatuses, job.TrackedPodsNames)
 
 	switch job.State {
 	case tracker.Initial:
@@ -385,8 +384,8 @@ func (job *Tracker) runPodTracker(podName string) error {
 	podTracker := pod.NewTracker(job.Context, podName, job.Namespace, job.Kube)
 	job.TrackedPodsNames = append(job.TrackedPodsNames, podName)
 
-	job.statusGeneration++
-	status := NewJobStatus(job.lastObject, job.statusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
+	job.StatusGeneration++
+	status := NewJobStatus(job.lastObject, job.StatusGeneration, (job.State == tracker.ResourceFailed), job.failedReason, job.podStatuses, job.TrackedPodsNames)
 	job.AddedPod <- PodAddedReport{
 		PodName:   podTracker.ResourceName,
 		JobStatus: status,

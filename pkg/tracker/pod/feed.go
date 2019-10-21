@@ -112,9 +112,7 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 			}
 
 		case report := <-pod.ContainerError:
-			if debug.Debug() {
-				fmt.Printf("Pod's `%s` container error: %#v", pod.ResourceName, report.ContainerError)
-			}
+			f.setStatus(report.PodStatus)
 
 			if f.OnContainerErrorFunc != nil {
 				err := f.OnContainerErrorFunc(report.ContainerError)
@@ -208,7 +206,6 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 
 		case err := <-errorChan:
 			return err
-
 		case <-doneChan:
 			return nil
 		}
