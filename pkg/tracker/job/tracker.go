@@ -40,7 +40,7 @@ type Tracker struct {
 
 	Added     chan JobStatus
 	Succeeded chan JobStatus
-	Failed    chan FailedReport
+	Failed    chan JobStatus
 	Status    chan JobStatus
 
 	EventMsg    chan string
@@ -81,7 +81,7 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 
 		Added:     make(chan JobStatus, 1),
 		Succeeded: make(chan JobStatus, 0),
-		Failed:    make(chan FailedReport, 0),
+		Failed:    make(chan JobStatus, 0),
 		Status:    make(chan JobStatus, 100),
 
 		EventMsg:    make(chan string, 1),
@@ -145,14 +145,14 @@ func (job *Tracker) Track() error {
 			} else {
 				status = JobStatus{IsFailed: true, FailedReason: reason}
 			}
-			job.Failed <- FailedReport{JobStatus: status, FailedReason: status.FailedReason}
+			job.Failed <- status
 
 		case <-job.objectDeleted:
 			job.lastObject = nil
 			job.State = tracker.ResourceDeleted
 			job.failedReason = "resource deleted"
 			status := JobStatus{IsFailed: true, FailedReason: job.failedReason}
-			job.Failed <- FailedReport{JobStatus: status, FailedReason: status.FailedReason}
+			job.Failed <- status
 			// TODO (longterm): This is not a fail, object may disappear then appear again.
 			// TODO (longterm): At this level tracker should allow that situation and still continue tracking.
 
@@ -280,7 +280,7 @@ func (job *Tracker) handleJobState(object *batchv1.Job) error {
 	case tracker.Initial:
 		if status.IsFailed {
 			job.State = tracker.ResourceFailed
-			job.Failed <- FailedReport{JobStatus: status, FailedReason: status.FailedReason}
+			job.Failed <- status
 		} else if status.IsSucceeded {
 			job.State = tracker.ResourceSucceeded
 			job.Succeeded <- status
@@ -292,7 +292,7 @@ func (job *Tracker) handleJobState(object *batchv1.Job) error {
 	case tracker.ResourceFailed:
 		if status.IsFailed {
 			job.State = tracker.ResourceFailed
-			job.Failed <- FailedReport{JobStatus: status, FailedReason: status.FailedReason}
+			job.Failed <- status
 		} else if status.IsSucceeded {
 			job.State = tracker.ResourceSucceeded
 			job.Succeeded <- status

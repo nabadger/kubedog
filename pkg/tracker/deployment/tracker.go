@@ -3,7 +3,6 @@ package deployment
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/flant/kubedog/pkg/tracker"
@@ -43,11 +42,10 @@ type Tracker struct {
 	tracker.Tracker
 	LogsFromTime time.Time
 
-	State                 tracker.TrackerState
-	Conditions            []string
-	FinalDeploymentStatus appsv1.DeploymentStatus
-	NewReplicaSetName     string
-	CurrentReady          bool
+	State             tracker.TrackerState
+	Conditions        []string
+	NewReplicaSetName string
+	CurrentReady      bool
 
 	knownReplicaSets map[string]*appsv1.ReplicaSet
 	lastObject       *appsv1.Deployment
@@ -535,29 +533,8 @@ func (d *Tracker) runPodTracker(podName, rsName string) error {
 	return nil
 }
 
-// FIXME: states
 func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
-	if debug.Debug() {
-		fmt.Printf("%s\n%s\n",
-			getDeploymentStatus(d.Kube, d.lastObject, object),
-			getReplicaSetsStatus(d.Kube, object))
-	}
-
-	if debug.Debug() {
-		evList, err := utils.ListEventsForObject(d.Kube, object)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "DEBUG: ERROR fetching list of events for deploy/%s in %s: %s\n", object.Name, object.Namespace, err)
-			return nil
-		}
-		utils.DescribeEvents(evList)
-	}
-
-	prevReady := false
-	if d.lastObject != nil {
-		prevReady = d.CurrentReady
-	}
 	d.lastObject = object
-
 	d.statusGeneration++
 
 	newPodsNames, err := d.getNewPodsNames()
@@ -566,19 +543,32 @@ func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 	}
 	status := NewDeploymentStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
 
-	d.CurrentReady = status.IsReady
-
 	switch d.State {
 	case tracker.Initial:
-		d.State = tracker.ResourceAdded
-		d.Added <- status
-	default:
-		if prevReady == false && d.CurrentReady == true {
-			d.FinalDeploymentStatus = object.Status
+		if status.IsFailed {
+			d.State = tracker.ResourceFailed
+			d.Failed <- status
+		} else if status.IsReady {
+			d.State = tracker.ResourceReady
+			d.Ready <- status
+		} else {
+			d.State = tracker.ResourceAdded
+			d.Added <- status
+		}
+	case tracker.ResourceAdded:
+	case tracker.ResourceFailed:
+		if status.IsFailed {
+			d.State = tracker.ResourceFailed
+			d.Failed <- status
+		} else if status.IsReady {
+			d.State = tracker.ResourceReady
 			d.Ready <- status
 		} else {
 			d.Status <- status
 		}
+
+	case tracker.ResourceSucceeded:
+		d.Status <- status
 	}
 
 	return nil
@@ -586,10 +576,6 @@ func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 
 // runEventsInformer watch for Deployment events
 func (d *Tracker) runEventsInformer(resource interface{}) {
-	//if d.lastObject == nil {
-	//	return
-	//}
-
 	eventInformer := event.NewEventInformer(&d.Tracker, resource)
 	eventInformer.WithChannels(d.EventMsg, d.resourceFailed, d.errors)
 	eventInformer.Run()

@@ -37,10 +37,9 @@ type Tracker struct {
 	tracker.Tracker
 	LogsFromTime time.Time
 
-	State                  tracker.TrackerState
-	Conditions             []string
-	FinalStatefulSetStatus appsv1.StatefulSetStatus
-	CurrentReady           bool
+	State        tracker.TrackerState
+	Conditions   []string
+	CurrentReady bool
 
 	lastObject       *appsv1.StatefulSet
 	statusGeneration uint64
@@ -400,43 +399,38 @@ func (d *Tracker) runPodTracker(podName string) error {
 	return nil
 }
 
-// FIXME: states
 func (d *Tracker) handleStatefulSetState(object *appsv1.StatefulSet) error {
-	if debug.Debug() {
-		fmt.Printf("%s\n", getStatefulSetStatus(object))
-		msg, ready, err := StatefulSetRolloutStatus(object)
-		fmt.Printf("StatefulSet kubectl rollout status: ready=%s, msg=%s, err=%v\n", debug.YesNo(ready), msg, err)
-
-		evList, err := utils.ListEventsForObject(d.Kube, object)
-		if err != nil {
-			fmt.Printf("ListEvents for sts/%s error: %v\n", object.Name, err)
-		} else {
-			utils.DescribeEvents(evList)
-		}
-	}
-
-	prevReady := false
-	if d.lastObject != nil {
-		prevReady = d.CurrentReady
-	}
 	d.lastObject = object
-
 	d.statusGeneration++
-	status := NewStatefulSetStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 
-	d.CurrentReady = status.IsReady
+	status := NewStatefulSetStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
 
 	switch d.State {
 	case tracker.Initial:
-		d.State = tracker.ResourceAdded
-		d.Added <- status
-	default:
-		if prevReady == false && d.CurrentReady == true {
-			d.FinalStatefulSetStatus = object.Status
+		if status.IsFailed {
+			d.State = tracker.ResourceFailed
+			d.Failed <- status
+		} else if status.IsReady {
+			d.State = tracker.ResourceReady
+			d.Ready <- status
+		} else {
+			d.State = tracker.ResourceAdded
+			d.Added <- status
+		}
+	case tracker.ResourceAdded:
+	case tracker.ResourceFailed:
+		if status.IsFailed {
+			d.State = tracker.ResourceFailed
+			d.Failed <- status
+		} else if status.IsReady {
+			d.State = tracker.ResourceReady
 			d.Ready <- status
 		} else {
 			d.Status <- status
 		}
+
+	case tracker.ResourceSucceeded:
+		d.Status <- status
 	}
 
 	return nil

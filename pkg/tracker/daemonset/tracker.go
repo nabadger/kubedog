@@ -41,11 +41,10 @@ type Tracker struct {
 	tracker.Tracker
 	LogsFromTime time.Time
 
-	State                tracker.TrackerState
-	TrackedPodsNames     []string
-	Conditions           []string
-	FinalDaemonSetStatus appsv1.DaemonSetStatus
-	CurrentReady         bool
+	State            tracker.TrackerState
+	TrackedPodsNames []string
+	Conditions       []string
+	CurrentReady     bool
 
 	Added  chan DaemonSetStatus
 	Ready  chan DaemonSetStatus
@@ -242,7 +241,6 @@ func (d *Tracker) Track() error {
 
 		case <-d.Context.Done():
 			return d.Context.Err()
-
 		case err := <-d.errors:
 			return err
 		}
@@ -411,31 +409,37 @@ func (d *Tracker) runPodTracker(podName string) error {
 }
 
 func (d *Tracker) handleDaemonSetState(object *appsv1.DaemonSet) error {
-	if debug.Debug() {
-		fmt.Printf("%s\n", getDaemonSetStatus(object))
-	}
-
-	prevReady := false
-	if d.lastObject != nil {
-		prevReady = d.CurrentReady
-	}
 	d.lastObject = object
-
 	d.statusGeneration++
+
 	status := NewDaemonSetStatus(object, d.statusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, d.getNewPodsNames())
-	d.CurrentReady = status.IsReady
 
 	switch d.State {
 	case tracker.Initial:
-		d.State = tracker.ResourceAdded
-		d.Added <- status
-	default:
-		if prevReady == false && d.CurrentReady == true {
-			d.FinalDaemonSetStatus = object.Status
+		if status.IsFailed {
+			d.State = tracker.ResourceFailed
+			d.Failed <- status
+		} else if status.IsReady {
+			d.State = tracker.ResourceReady
+			d.Ready <- status
+		} else {
+			d.State = tracker.ResourceAdded
+			d.Added <- status
+		}
+	case tracker.ResourceAdded:
+	case tracker.ResourceFailed:
+		if status.IsFailed {
+			d.State = tracker.ResourceFailed
+			d.Failed <- status
+		} else if status.IsReady {
+			d.State = tracker.ResourceReady
 			d.Ready <- status
 		} else {
 			d.Status <- status
 		}
+
+	case tracker.ResourceSucceeded:
+		d.Status <- status
 	}
 
 	return nil

@@ -120,11 +120,11 @@ func (f *feed) Track(name, namespace string, kube kubernetes.Interface, opts tra
 				}
 			}
 
-		case report := <-job.Failed:
-			f.setStatus(report.JobStatus)
+		case status := <-job.Failed:
+			f.setStatus(status)
 
 			if f.OnFailedFunc != nil {
-				err := f.OnFailedFunc(report.FailedReason)
+				err := f.OnFailedFunc(status.FailedReason)
 				if err == tracker.StopTrack {
 					return nil
 				}
