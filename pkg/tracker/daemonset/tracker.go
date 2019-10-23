@@ -128,9 +128,6 @@ func (d *Tracker) Track() error {
 	for {
 		select {
 		case object := <-d.resourceAdded:
-			d.runPodsInformer()
-			d.runEventsInformer()
-
 			if err := d.handleDaemonSetState(object); err != nil {
 				return err
 			}
@@ -323,18 +320,10 @@ func (d *Tracker) runDaemonSetInformer() {
 }
 
 // runPodsInformer watch for DaemonSet Pods events
-func (d *Tracker) runPodsInformer() {
-	if d.lastObject == nil {
-		// This shouldn't happen!
-		// TODO add error
-		return
-	}
-
-	podsInformer := pod.NewPodsInformer(&d.Tracker, utils.ControllerAccessor(d.lastObject))
+func (d *Tracker) runPodsInformer(object *appsv1.DaemonSet) {
+	podsInformer := pod.NewPodsInformer(&d.Tracker, utils.ControllerAccessor(object))
 	podsInformer.WithChannels(d.podAddedRelay, d.errors)
 	podsInformer.Run()
-
-	return
 }
 
 func (d *Tracker) runPodTracker(podName string) error {
@@ -414,6 +403,9 @@ func (d *Tracker) handleDaemonSetState(object *appsv1.DaemonSet) error {
 
 	switch d.State {
 	case tracker.Initial:
+		d.runPodsInformer(object)
+		d.runEventsInformer(object)
+
 		if status.IsFailed {
 			d.State = tracker.ResourceFailed
 			d.Failed <- status
@@ -444,14 +436,8 @@ func (d *Tracker) handleDaemonSetState(object *appsv1.DaemonSet) error {
 }
 
 // runEventsInformer watch for DaemonSet events
-func (d *Tracker) runEventsInformer() {
-	if d.lastObject == nil {
-		return
-	}
-
-	eventInformer := event.NewEventInformer(&d.Tracker, d.lastObject)
+func (d *Tracker) runEventsInformer(object *appsv1.DaemonSet) {
+	eventInformer := event.NewEventInformer(&d.Tracker, object)
 	eventInformer.WithChannels(d.EventMsg, d.resourceFailed, d.errors)
 	eventInformer.Run()
-
-	return
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/flant/kubedog/pkg/tracker/indicators"
+
 	"github.com/flant/kubedog/pkg/tracker"
 	"github.com/flant/kubedog/pkg/tracker/debug"
 	"github.com/flant/kubedog/pkg/tracker/event"
@@ -144,14 +146,7 @@ func (d *Tracker) Track() (err error) {
 	for {
 		select {
 		case object := <-d.resourceAdded:
-			d.runReplicaSetsInformer()
-			d.runPodsInformer()
-			d.runEventsInformer(object)
-
 			if err := d.handleDeploymentState(object); err != nil {
-				if debug.Debug() {
-					fmt.Printf("handle deployment state error: %v", err)
-				}
 				return err
 			}
 
@@ -275,6 +270,11 @@ func (d *Tracker) Track() (err error) {
 
 		case podStatuses := <-d.podStatusesRelay:
 			for podName, podStatus := range podStatuses {
+				st := "-"
+				if podStatus.StatusIndicator != nil {
+					st = podStatus.StatusIndicator.FormatTableElem(nil, indicators.FormatTableElemOptions{})
+				}
+				fmt.Printf("podStatusesRelay -> %s = %s\n", podName, st)
 				d.podStatuses[podName] = podStatus
 			}
 			if d.lastObject != nil {
@@ -283,7 +283,8 @@ func (d *Tracker) Track() (err error) {
 				if err != nil {
 					return err
 				}
-				d.Status <- NewDeploymentStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+				status := NewDeploymentStatus(d.lastObject, d.StatusGeneration, (d.State == tracker.ResourceFailed), d.failedReason, d.podStatuses, newPodsNames)
+				d.Status <- status
 			}
 
 		case podLogChunks := <-d.podLogChunksRelay:
@@ -441,33 +442,17 @@ func (d *Tracker) runDeploymentInformer() {
 }
 
 // runReplicaSetsInformer watch for deployment events
-func (d *Tracker) runReplicaSetsInformer() {
-	if d.lastObject == nil {
-		// This shouldn't happen!
-		// TODO add error
-		return
-	}
-
-	rsInformer := replicaset.NewReplicaSetInformer(&d.Tracker, utils.ControllerAccessor(d.lastObject))
+func (d *Tracker) runReplicaSetsInformer(object *appsv1.Deployment) {
+	rsInformer := replicaset.NewReplicaSetInformer(&d.Tracker, utils.ControllerAccessor(object))
 	rsInformer.WithChannels(d.replicaSetAdded, d.replicaSetModified, d.replicaSetDeleted, d.errors)
 	rsInformer.Run()
-
-	return
 }
 
 // runDeploymentInformer watch for deployment events
-func (d *Tracker) runPodsInformer() {
-	if d.lastObject == nil {
-		// This shouldn't happen!
-		// TODO add error
-		return
-	}
-
-	podsInformer := pod.NewPodsInformer(&d.Tracker, utils.ControllerAccessor(d.lastObject))
+func (d *Tracker) runPodsInformer(object *appsv1.Deployment) {
+	podsInformer := pod.NewPodsInformer(&d.Tracker, utils.ControllerAccessor(object))
 	podsInformer.WithChannels(d.podAddedRelay, d.errors)
 	podsInformer.Run()
-
-	return
 }
 
 func (d *Tracker) runPodTracker(podName, rsName string) error {
@@ -543,6 +528,10 @@ func (d *Tracker) handleDeploymentState(object *appsv1.Deployment) error {
 
 	switch d.State {
 	case tracker.Initial:
+		d.runPodsInformer(object)
+		d.runReplicaSetsInformer(object)
+		d.runEventsInformer(object)
+
 		if status.IsFailed {
 			d.State = tracker.ResourceFailed
 			d.Failed <- status
@@ -577,6 +566,4 @@ func (d *Tracker) runEventsInformer(resource interface{}) {
 	eventInformer := event.NewEventInformer(&d.Tracker, resource)
 	eventInformer.WithChannels(d.EventMsg, d.resourceFailed, d.errors)
 	eventInformer.Run()
-
-	return
 }

@@ -106,7 +106,6 @@ func NewTracker(ctx context.Context, name, namespace string, kube kubernetes.Int
 
 func (job *Tracker) Track() error {
 	var err error
-	var podsTrackersIsRunning bool
 
 	err = job.runInformer()
 	if err != nil {
@@ -116,14 +115,6 @@ func (job *Tracker) Track() error {
 	for {
 		select {
 		case object := <-job.objectAdded:
-			job.runEventsInformer()
-
-			if !podsTrackersIsRunning {
-				if err := job.runPodsTrackers(object); err != nil {
-					return fmt.Errorf("unable to track job %s pods: %s", job.ResourceName, err)
-				}
-			}
-
 			if err := job.handleJobState(object); err != nil {
 				return err
 			}
@@ -277,6 +268,12 @@ func (job *Tracker) handleJobState(object *batchv1.Job) error {
 
 	switch job.State {
 	case tracker.Initial:
+		job.runEventsInformer(object)
+
+		if err := job.runPodsTrackers(object); err != nil {
+			return fmt.Errorf("unable to track job %s pods: %s", job.ResourceName, err)
+		}
+
 		if status.IsFailed {
 			job.State = tracker.ResourceFailed
 			job.Failed <- status
@@ -444,14 +441,8 @@ func (job *Tracker) runPodTracker(podName string) error {
 }
 
 // runEventsInformer watch for DaemonSet events
-func (job *Tracker) runEventsInformer() {
-	if job.lastObject == nil {
-		return
-	}
-
-	eventInformer := event.NewEventInformer(&job.Tracker, job.lastObject)
+func (job *Tracker) runEventsInformer(object *batchv1.Job) {
+	eventInformer := event.NewEventInformer(&job.Tracker, object)
 	eventInformer.WithChannels(job.EventMsg, job.objectFailed, job.errors)
 	eventInformer.Run()
-
-	return
 }

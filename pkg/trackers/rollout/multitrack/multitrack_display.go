@@ -423,7 +423,6 @@ func (mt *multitracker) displayDeploymentsStatusProgress() {
 	for _, name := range resourcesNames {
 		prevStatus := mt.PrevDeploymentsStatuses[name]
 		status := mt.DeploymentsStatuses[name]
-
 		spec := mt.DeploymentsSpecs[name]
 
 		showProgress := (status.StatusGeneration > prevStatus.StatusGeneration)
